@@ -6,6 +6,11 @@ const { startTestSshServer } = require('./helpers/sshServer.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 
+function localShellPath() {
+    if (process.platform === 'win32') return process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
+    return '/bin/sh';
+}
+
 async function pathExists(target) {
     try {
         await fs.access(target);
@@ -173,7 +178,7 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await expect(settingsHeading(page, 'SSH 安全')).toBeVisible();
     await selectRowValue(page, '默认协议', 'local');
     await fillRowInput(page, '默认 Telnet 端口', '2323');
-    await fillRowInput(page, '默认本地 Shell', '/bin/sh');
+    await fillRowInput(page, '默认本地 Shell', localShellPath());
     await fillRowInput(page, '默认工作目录', testInfo.e2e.shellCwd);
     await toggleRow(page, '断线自动重连');
     await fillRowInput(page, '重连间隔', '4');
@@ -271,7 +276,7 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await sessionDialog.getByRole('tab', { name: 'Local Shell' }).click();
     await sessionDialog.getByLabel('名称').fill('E2E Local');
     await sessionDialog.getByLabel('文件夹').selectOption({ label: 'E2E Folder / E2E Child' });
-    await sessionDialog.getByLabel('Shell').fill('/bin/sh');
+    await sessionDialog.getByLabel('Shell').fill(localShellPath());
     await sessionDialog.getByLabel('工作目录').fill(shellCwd);
     await sessionDialog.getByRole('button', { name: '保存' }).click();
     await expect(page.locator('.resource-row', { hasText: 'E2E Local' })).toBeVisible();
