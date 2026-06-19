@@ -1,0 +1,155 @@
+/* 设计令牌默认值（深色）。运行时由 themeManager 覆盖到 :root */
+:root {
+    --nx-bg: #1e1e1e;
+    --nx-surface: #252526;
+    --nx-surface-2: #2d2d30;
+    --nx-border: #3c3c3c;
+    --nx-text: #d4d4d4;
+    --nx-text-dim: #8a8a8a;
+    --nx-accent: #0a84ff;
+    --nx-accent-text: #ffffff;
+    --nx-danger: #f14c4c;
+    --nx-success: #2ecc71;
+    --nx-warning: #f1c40f;
+    --nx-tab-active-bg: #1e1e1e;
+    --nx-tab-inactive-bg: #2d2d30;
+    --nx-titlebar-bg: #28282a;
+    --nx-rail-bg: #28282a;
+    --nx-surface-raised: #2b2b2e;
+    --nx-control-muted: rgba(255, 255, 255, 0.05);
+    --nx-bg-overlay: rgba(30, 30, 30, 0.52);
+    --nx-border-soft: rgba(60, 60, 60, 0.72);
+    --nx-border-softer: rgba(60, 60, 60, 0.56);
+    --nx-border-muted: rgba(60, 60, 60, 0.64);
+    --nx-accent-soft: rgba(10, 132, 255, 0.16);
+    --nx-accent-softer: rgba(10, 132, 255, 0.08);
+    --nx-accent-hover: rgba(10, 132, 255, 0.12);
+    --nx-accent-active: rgba(10, 132, 255, 0.22);
+    --nx-accent-border: rgba(10, 132, 255, 0.55);
+    --nx-accent-border-soft: rgba(10, 132, 255, 0.36);
+    --nx-danger-soft: rgba(241, 76, 76, 0.1);
+    --nx-danger-ring: rgba(241, 76, 76, 0.22);
+    --nx-danger-border: rgba(241, 76, 76, 0.54);
+    --nx-warning-soft: rgba(241, 196, 15, 0.14);
+    --nx-success-soft: rgba(46, 204, 113, 0.1);
+
+    --nx-radius: 6px;
+    --nx-font-ui: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    --nx-font-mono: 'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace;
+}
+
+:root[data-theme='light'] {
+    --nx-titlebar-bg: #f7f7f7;
+    --nx-rail-bg: #eeeeee;
+    --nx-surface-raised: #fbfbfb;
+    --nx-control-muted: rgba(0, 0, 0, 0.035);
+    --nx-bg-overlay: rgba(255, 255, 255, 0.62);
+    --nx-border-soft: rgba(208, 208, 208, 0.72);
+    --nx-border-softer: rgba(208, 208, 208, 0.56);
+    --nx-border-muted: rgba(208, 208, 208, 0.64);
+    --nx-accent-soft: rgba(10, 102, 194, 0.14);
+    --nx-accent-softer: rgba(10, 102, 194, 0.07);
+    --nx-accent-hover: rgba(10, 102, 194, 0.1);
+    --nx-accent-active: rgba(10, 102, 194, 0.18);
+    --nx-accent-border: rgba(10, 102, 194, 0.5);
+    --nx-accent-border-soft: rgba(10, 102, 194, 0.32);
+    --nx-danger-soft: rgba(209, 52, 56, 0.09);
+    --nx-danger-ring: rgba(209, 52, 56, 0.2);
+    --nx-danger-border: rgba(209, 52, 56, 0.48);
+    --nx-warning-soft: rgba(160, 109, 0, 0.12);
+    --nx-success-soft: rgba(22, 130, 93, 0.1);
+}
+
+:root[data-theme='solarized'] {
+    --nx-titlebar-bg: #083946;
+    --nx-rail-bg: #06323d;
+    --nx-surface-raised: #0a4150;
+    --nx-control-muted: rgba(255, 255, 255, 0.045);
+    --nx-bg-overlay: rgba(0, 43, 54, 0.56);
+    --nx-border-soft: rgba(15, 75, 90, 0.72);
+    --nx-border-softer: rgba(15, 75, 90, 0.56);
+    --nx-border-muted: rgba(15, 75, 90, 0.64);
+    --nx-accent-soft: rgba(38, 139, 210, 0.16);
+    --nx-accent-softer: rgba(38, 139, 210, 0.08);
+    --nx-accent-hover: rgba(38, 139, 210, 0.12);
+    --nx-accent-active: rgba(38, 139, 210, 0.22);
+    --nx-accent-border: rgba(38, 139, 210, 0.55);
+    --nx-accent-border-soft: rgba(38, 139, 210, 0.36);
+    --nx-danger-soft: rgba(220, 50, 47, 0.1);
+    --nx-danger-ring: rgba(220, 50, 47, 0.22);
+    --nx-danger-border: rgba(220, 50, 47, 0.54);
+    --nx-warning-soft: rgba(181, 137, 0, 0.14);
+    --nx-success-soft: rgba(133, 153, 0, 0.1);
+}
+
+:root[data-theme='monokai'] {
+    --nx-titlebar-bg: #35362f;
+    --nx-rail-bg: #313229;
+    --nx-surface-raised: #393a32;
+    --nx-control-muted: rgba(255, 255, 255, 0.05);
+    --nx-bg-overlay: rgba(39, 40, 34, 0.56);
+    --nx-border-soft: rgba(68, 69, 61, 0.72);
+    --nx-border-softer: rgba(68, 69, 61, 0.56);
+    --nx-border-muted: rgba(68, 69, 61, 0.64);
+    --nx-accent-soft: rgba(166, 226, 46, 0.16);
+    --nx-accent-softer: rgba(166, 226, 46, 0.08);
+    --nx-accent-hover: rgba(166, 226, 46, 0.12);
+    --nx-accent-active: rgba(166, 226, 46, 0.22);
+    --nx-accent-border: rgba(166, 226, 46, 0.55);
+    --nx-accent-border-soft: rgba(166, 226, 46, 0.36);
+    --nx-danger-soft: rgba(249, 38, 114, 0.1);
+    --nx-danger-ring: rgba(249, 38, 114, 0.22);
+    --nx-danger-border: rgba(249, 38, 114, 0.54);
+    --nx-warning-soft: rgba(244, 191, 117, 0.14);
+    --nx-success-soft: rgba(166, 226, 46, 0.1);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    font-family: var(--nx-font-ui);
+    color: var(--nx-text);
+    background: var(--nx-bg);
+    font-size: 13px;
+    user-select: none;
+    overflow: hidden;
+}
+
+button,
+input,
+select {
+    font: inherit;
+}
+
+button {
+    -webkit-app-region: no-drag;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+    outline: 2px solid var(--nx-accent-border);
+    outline-offset: 2px;
+}
+
+/* 自研滚动条 */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--nx-border);
+    border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}

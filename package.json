@@ -1,0 +1,38 @@
+{
+    "name": "nexterm",
+    "version": "0.1.0",
+    "description": "类 Xshell 的跨平台远程接入终端（NetNexus 架构范式）",
+    "main": "electron/main.js",
+    "author": "jihuaibin",
+    "license": "MIT",
+    "scripts": {
+        "start": "vite",
+        "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"npm:dev:electron\"",
+        "dev:electron": "wait-on tcp:127.0.0.1:5273 && cross-env NODE_ENV=development electron .",
+        "postinstall": "electron-rebuild -f -w node-pty",
+        "build": "vite build",
+        "preview": "vite preview",
+        "test:e2e": "npm run build && playwright test",
+        "test:e2e:ci": "npm run build && playwright test --reporter=line"
+    },
+    "dependencies": {
+        "@lucide/vue": "^1.21.0",
+        "@xterm/addon-fit": "^0.10.0",
+        "@xterm/addon-search": "^0.16.0",
+        "@xterm/xterm": "^5.5.0",
+        "electron-store": "^8.2.0",
+        "node-pty": "^1.1.0",
+        "ssh2": "^1.17.0",
+        "vue": "^3.4.0"
+    },
+    "devDependencies": {
+        "@electron/rebuild": "^3.7.0",
+        "@playwright/test": "^1.39.0",
+        "@vitejs/plugin-vue": "^4.2.3",
+        "concurrently": "^8.2.0",
+        "cross-env": "^7.0.3",
+        "electron": "^15.5.7",
+        "vite": "^4.4.0",
+        "wait-on": "^7.2.0"
+    }
+}

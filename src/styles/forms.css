@@ -1,0 +1,227 @@
+/* 设置页通用表单样式（自研，消费设计令牌） */
+.nx-settings {
+    display: grid;
+    gap: 18px;
+}
+.nx-group {
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--nx-border-soft);
+}
+.nx-group:last-child {
+    border-bottom: none;
+}
+.nx-group__head {
+    padding: 10px 0 3px;
+}
+.nx-group__head h3 {
+    margin: 0;
+    color: var(--nx-text);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+.nx-group__head p {
+    margin: 3px 0 0;
+    color: var(--nx-text-dim);
+    font-size: 11px;
+}
+.nx-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(0, auto);
+    align-items: center;
+    gap: 16px;
+    min-height: 66px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--nx-border-soft);
+}
+.nx-row:last-child {
+    border-bottom: none;
+}
+.nx-row__text {
+    min-width: 0;
+}
+.nx-row__label {
+    font-weight: 600;
+}
+.nx-row__desc {
+    color: var(--nx-text-dim);
+    font-size: 11px;
+    margin-top: 3px;
+}
+.nx-row__control {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    justify-content: flex-end;
+}
+.nx-row__control--wide {
+    min-width: min(360px, 100%);
+}
+.nx-row__control--wide .nx-input {
+    flex: 1;
+}
+.nx-row__control--stack {
+    width: min(360px, 100%);
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.nx-input,
+.nx-select {
+    height: 32px;
+    padding: 0 10px;
+    background: var(--nx-bg);
+    border: 1px solid var(--nx-border);
+    border-radius: 7px;
+    color: var(--nx-text);
+    outline: none;
+    min-width: 140px;
+}
+.nx-input:focus,
+.nx-select:focus {
+    border-color: var(--nx-accent);
+}
+.nx-input--num {
+    min-width: 80px;
+    text-align: right;
+}
+.nx-input--path {
+    min-width: 260px;
+}
+.nx-input--format {
+    min-width: 260px;
+    font-family: var(--nx-font-mono);
+    font-size: 12px;
+}
+.nx-select--wide {
+    width: 100%;
+}
+.nx-select--shortcut {
+    min-width: 190px;
+}
+.nx-button {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--nx-border);
+    border-radius: 7px;
+    background: var(--nx-surface-2);
+    color: var(--nx-text);
+    cursor: pointer;
+}
+.nx-button:hover {
+    border-color: var(--nx-accent);
+    color: var(--nx-accent);
+}
+
+/* 步进器 */
+.nx-step {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--nx-border);
+    background: var(--nx-surface-2);
+    color: var(--nx-text);
+    border-radius: 7px;
+    cursor: pointer;
+    line-height: 1;
+}
+.nx-step:hover {
+    border-color: var(--nx-accent);
+    color: var(--nx-accent);
+}
+.nx-step__val {
+    min-width: 32px;
+    text-align: center;
+}
+
+/* 开关 */
+.nx-toggle {
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: 1px solid var(--nx-border);
+    background: var(--nx-border);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.nx-toggle.on {
+    background: var(--nx-accent);
+}
+.nx-toggle::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+}
+.nx-toggle.on::after {
+    transform: translateX(18px);
+}
+
+/* 配色色块 */
+.nx-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+    max-width: 360px;
+}
+.nx-swatch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 0 10px 0 7px;
+    border: 1px solid var(--nx-border);
+    background: var(--nx-surface-2);
+    color: var(--nx-text);
+    border-radius: 7px;
+    cursor: pointer;
+}
+.nx-swatch:hover {
+    border-color: var(--nx-text-dim);
+}
+.nx-swatch.active {
+    border-color: var(--nx-accent);
+    background: var(--nx-accent-soft);
+    color: var(--nx-text);
+}
+.nx-swatch__chip {
+    display: grid;
+    grid-template-columns: repeat(3, 10px);
+    gap: 2px;
+    padding: 4px;
+    border-radius: 5px;
+    background: var(--swatch-bg);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.nx-swatch__chip i {
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    background: var(--swatch-surface);
+}
+.nx-swatch__chip i:nth-child(2) {
+    background: var(--swatch-accent);
+}
+.nx-swatch__chip i:nth-child(3) {
+    background: var(--swatch-accent);
+}
+
+@media (max-width: 760px) {
+    .nx-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+    .nx-row__control,
+    .nx-swatches {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
