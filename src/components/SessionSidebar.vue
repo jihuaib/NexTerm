@@ -414,6 +414,7 @@ const sftpProgress = ref({
 let offSftpCwd = null;
 let offSftpProgress = null;
 let progressHideTimer = null;
+let fileSessionLoadToken = 0;
 const {
     setFieldError: setFolderFieldError,
     clearFieldError: clearFolderFieldError,
@@ -601,6 +602,23 @@ async function loadRemoteDirectory(path = '/') {
     } finally {
         sftpLoading.value = false;
     }
+}
+
+async function resolveRemoteStartPath(sessionId) {
+    if (!sftpFollowConsole.value) return '/';
+    if (sftpCwdBySession[sessionId]) return sftpCwdBySession[sessionId];
+    if (!window.sftpApi?.cwd) return '/';
+
+    try {
+        const res = await window.sftpApi.cwd({ sessionId });
+        if (res.status === 'success' && res.data?.path) {
+            sftpCwdBySession[sessionId] = res.data.path;
+            return res.data.path;
+        }
+    } catch (_err) {
+        /* list fallback will show root if cwd cannot be queried */
+    }
+    return '/';
 }
 
 function refreshRemoteFiles() {
@@ -1217,16 +1235,25 @@ watch(
     { immediate: true }
 );
 
-watch(fileSessionId, sessionId => {
+watch(fileSessionId, async sessionId => {
+    const token = ++fileSessionLoadToken;
     sftpProgress.value.visible = false;
-    const targetPath = sftpFollowConsole.value ? sftpCwdBySession[sessionId] || '/' : '/';
+    if (!sessionId) {
+        resetRemoteTree('/');
+        return;
+    }
+
+    const targetPath = await resolveRemoteStartPath(sessionId);
+    if (token !== fileSessionLoadToken || sessionId !== fileSessionId.value) return;
     resetRemoteTree(targetPath);
-    if (sessionId) loadRemoteDirectory(targetPath);
+    loadRemoteDirectory(targetPath);
 });
 
-watch(sftpFollowConsole, enabled => {
+watch(sftpFollowConsole, async enabled => {
     if (!enabled || !fileSessionId.value) return;
-    const targetPath = sftpCwdBySession[fileSessionId.value];
+    const sessionId = fileSessionId.value;
+    const targetPath = await resolveRemoteStartPath(sessionId);
+    if (sessionId !== fileSessionId.value) return;
     if (targetPath && targetPath !== remotePath.value) loadRemoteDirectory(targetPath);
 });
 

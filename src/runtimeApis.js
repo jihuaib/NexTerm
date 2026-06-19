@@ -357,6 +357,9 @@ export function ensureRuntimeApis() {
         async download() {
             return ok(null, '浏览器预览不执行真实下载');
         },
+        async cwd() {
+            return ok({ path: '/' }, '获取当前目录成功');
+        },
         async upload() {
             return ok(null, '浏览器预览不执行真实上传');
         },

@@ -14,6 +14,7 @@ class SftpApp {
         this.sshManager = sshManager;
         this.dispatcher = dispatcher;
         ipcMain.handle('sftp:list', this.handleList.bind(this));
+        ipcMain.handle('sftp:cwd', this.handleCwd.bind(this));
         ipcMain.handle('sftp:download', this.handleDownload.bind(this));
         ipcMain.handle('sftp:upload', this.handleUpload.bind(this));
         ipcMain.handle('sftp:mkdir', this.handleMkdir.bind(this));
@@ -46,6 +47,16 @@ class SftpApp {
             return successResponse(result, '获取远程目录成功');
         } catch (err) {
             return errorResponse('获取远程目录失败: ' + err.message);
+        }
+    }
+
+    async handleCwd(_event, payload = {}) {
+        try {
+            if (!payload.sessionId) return errorResponse('请选择 SSH 会话');
+            const result = await this.sshManager.currentCwd(payload.sessionId);
+            return successResponse(result, '获取当前目录成功');
+        } catch (err) {
+            return errorResponse('获取当前目录失败: ' + err.message);
         }
     }
 

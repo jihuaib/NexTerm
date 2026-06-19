@@ -432,6 +432,26 @@ class SshManager {
         return ctx.sftpReady;
     }
 
+    async currentCwd(sessionId) {
+        const ctx = this.conns.get(sessionId);
+        if (!ctx) throw new Error('SSH 会话不存在');
+        if (ctx.cwd && ctx.cwd !== '/') return { path: ctx.cwd };
+
+        const sftp = await this.ensureSftp(sessionId);
+        const realPath = await new Promise((resolve, reject) => {
+            sftp.realpath('.', (err, resolvedPath) => {
+                if (err) reject(err);
+                else resolve(resolvedPath);
+            });
+        });
+        if (realPath) {
+            ctx.cwd = normalizeRemotePath(realPath);
+            ctx.home = ctx.home && ctx.home !== '/' ? ctx.home : ctx.cwd;
+            this.emit(SFTP_EVT.CWD, { sessionId, path: ctx.cwd });
+        }
+        return { path: ctx.cwd || '/' };
+    }
+
     async list(sessionId, dirPath = '/') {
         const sftp = await this.ensureSftp(sessionId);
         const normalized = normalizeRemotePath(dirPath);

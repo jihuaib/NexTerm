@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('terminalApi', {
 
 contextBridge.exposeInMainWorld('sftpApi', {
     list: payload => ipcRenderer.invoke('sftp:list', payload),
+    cwd: payload => ipcRenderer.invoke('sftp:cwd', payload),
     download: payload => ipcRenderer.invoke('sftp:download', payload),
     upload: payload => ipcRenderer.invoke('sftp:upload', payload),
     mkdir: payload => ipcRenderer.invoke('sftp:mkdir', payload),
