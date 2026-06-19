@@ -78,7 +78,7 @@
                         :class="{ on: s.terminalSelectToCopy }"
                         :aria-pressed="s.terminalSelectToCopy ? 'true' : 'false'"
                         @click="update({ terminalSelectToCopy: !s.terminalSelectToCopy })"
-                    ></button>
+                    />
                 </div>
             </div>
 
@@ -123,29 +123,29 @@
 </template>
 
 <script setup>
-import { store, updateSettings } from '../../store';
+    import { store, updateSettings } from '../../store';
 
-const s = store.settings;
-const searchOptions = [
-    { label: 'Cmd/Ctrl + F', value: 'CmdOrCtrl+F' },
-    { label: 'Cmd/Ctrl + Shift + F', value: 'CmdOrCtrl+Shift+F' },
-    { label: 'Alt/Option + F', value: 'Alt+F' },
-    { label: '禁用', value: '' }
-];
-const copyOptions = [
-    { label: 'Cmd/Ctrl + Shift + C', value: 'CmdOrCtrl+Shift+C' },
-    { label: 'Cmd/Ctrl + C', value: 'CmdOrCtrl+C' },
-    { label: 'Ctrl + Insert', value: 'Ctrl+Insert' },
-    { label: '禁用', value: '' }
-];
-const pasteOptions = [
-    { label: 'Cmd/Ctrl + Shift + V', value: 'CmdOrCtrl+Shift+V' },
-    { label: 'Cmd/Ctrl + V', value: 'CmdOrCtrl+V' },
-    { label: 'Shift + Insert', value: 'Shift+Insert' },
-    { label: '禁用', value: '' }
-];
+    const s = store.settings;
+    const searchOptions = [
+        { label: 'Cmd/Ctrl + F', value: 'CmdOrCtrl+F' },
+        { label: 'Cmd/Ctrl + Shift + F', value: 'CmdOrCtrl+Shift+F' },
+        { label: 'Alt/Option + F', value: 'Alt+F' },
+        { label: '禁用', value: '' }
+    ];
+    const copyOptions = [
+        { label: 'Cmd/Ctrl + Shift + C', value: 'CmdOrCtrl+Shift+C' },
+        { label: 'Cmd/Ctrl + C', value: 'CmdOrCtrl+C' },
+        { label: 'Ctrl + Insert', value: 'Ctrl+Insert' },
+        { label: '禁用', value: '' }
+    ];
+    const pasteOptions = [
+        { label: 'Cmd/Ctrl + Shift + V', value: 'CmdOrCtrl+Shift+V' },
+        { label: 'Cmd/Ctrl + V', value: 'CmdOrCtrl+V' },
+        { label: 'Shift + Insert', value: 'Shift+Insert' },
+        { label: '禁用', value: '' }
+    ];
 
-function update(patch) {
-    updateSettings(patch);
-}
+    function update(patch) {
+        updateSettings(patch);
+    }
 </script>

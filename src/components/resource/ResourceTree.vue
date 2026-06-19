@@ -26,40 +26,40 @@
 </template>
 
 <script setup>
-import ResourceTreeNode from './ResourceTreeNode.vue';
+    import ResourceTreeNode from './ResourceTreeNode.vue';
 
-defineProps({
-    nodes: { type: Array, default: () => [] },
-    selectedId: { type: String, default: '' },
-    dropHoverId: { type: String, default: '' }
-});
+    defineProps({
+        nodes: { type: Array, default: () => [] },
+        selectedId: { type: String, default: '' },
+        dropHoverId: { type: String, default: '' }
+    });
 
-defineEmits([
-    'select',
-    'blank-contextmenu',
-    'blank-drop',
-    'node-contextmenu',
-    'node-activate',
-    'node-drop',
-    'node-dragstart',
-    'node-dragenter',
-    'node-dragleave'
-]);
+    defineEmits([
+        'select',
+        'blank-contextmenu',
+        'blank-drop',
+        'node-contextmenu',
+        'node-activate',
+        'node-drop',
+        'node-dragstart',
+        'node-dragenter',
+        'node-dragleave'
+    ]);
 </script>
 
 <style scoped>
-.resource-tree {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 8px 8px 7px;
-    border-bottom: 1px solid var(--nx-border);
-}
-.resource-tree__content {
-    width: max-content;
-    min-width: 100%;
-    display: grid;
-    align-content: start;
-    gap: 3px;
-}
+    .resource-tree {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 8px 8px 7px;
+        border-bottom: 1px solid var(--nx-border);
+    }
+    .resource-tree__content {
+        width: max-content;
+        min-width: 100%;
+        display: grid;
+        align-content: start;
+        gap: 3px;
+    }
 </style>

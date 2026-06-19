@@ -63,7 +63,8 @@ function normalizeSession(def = {}, existing = null) {
         host,
         port: isLocal ? null : Number(def.port || existing?.port) || port,
         username: stringField(def, existing, 'username'),
-        authType: def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
+        authType:
+            def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
         password: stringField(def, existing, 'password'),
         privateKeyPath: stringField(def, existing, 'privateKeyPath'),
         passphrase: stringField(def, existing, 'passphrase'),

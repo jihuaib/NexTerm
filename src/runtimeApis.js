@@ -30,7 +30,9 @@ const PREVIEW_SETTINGS = {
     terminalPasteShortcut: 'CmdOrCtrl+Shift+V',
     terminalSelectToCopy: false,
     terminalRightClickAction: 'paste',
-    terminalContextMenuTrigger: 'shift'
+    terminalContextMenuTrigger: 'shift',
+    updateAutoCheckOnStartup: true,
+    updateAutoDownload: false
 };
 
 const PREVIEW_SESSIONS = [
@@ -123,7 +125,8 @@ function normalizeSession(def = {}, existing = null) {
         host,
         port: isLocal ? null : Number(def.port || existing?.port) || port,
         username: stringField(def, existing, 'username'),
-        authType: def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
+        authType:
+            def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
         password: stringField(def, existing, 'password'),
         privateKeyPath: stringField(def, existing, 'privateKeyPath'),
         passphrase: stringField(def, existing, 'passphrase'),
@@ -208,8 +211,10 @@ export function ensureRuntimeApis() {
             return ok(getPreviewSessions());
         },
         async save(def) {
-            if (!isLocalProtocol(def.protocol) && (!def.host || !String(def.host).trim())) return fail('请填写主机地址');
-            if (def.protocol === 'ssh' && (!def.username || !String(def.username).trim())) return fail('请填写 SSH 用户名');
+            if (!isLocalProtocol(def.protocol) && (!def.host || !String(def.host).trim()))
+                return fail('请填写主机地址');
+            if (def.protocol === 'ssh' && (!def.username || !String(def.username).trim()))
+                return fail('请填写 SSH 用户名');
 
             const sessions = getPreviewSessions();
             const id = def.id || null;
@@ -265,7 +270,11 @@ export function ensureRuntimeApis() {
             const sessions = getPreviewSessions();
             const index = sessions.findIndex(item => item.id === sessionId);
             if (index < 0) return fail('会话不存在');
-            sessions.splice(index, 1, normalizeSession({ ...sessions[index], folderId: folderId || null }, sessions[index]));
+            sessions.splice(
+                index,
+                1,
+                normalizeSession({ ...sessions[index], folderId: folderId || null }, sessions[index])
+            );
             writeJson(SESSION_KEY, sessions);
             return ok(sessions[index]);
         }
@@ -299,7 +308,7 @@ export function ensureRuntimeApis() {
                                     ? `Local shell requires Electron with npm run dev.\r\n`
                                     : isSsh
                                       ? `SSH/SFTP requires Electron with npm run dev.\r\n`
-                                    : `Connected to ${options.host}:${options.port} (${options.protocol})\r\n`) +
+                                      : `Connected to ${options.host}:${options.port} (${options.protocol})\r\n`) +
                                 `Real terminal sessions run in Electron.\r\n\r\npreview$ `
                         )
                     });
@@ -364,7 +373,10 @@ export function ensureRuntimeApis() {
             return ok(null, '浏览器预览不执行真实上传');
         },
         async mkdir(payload = {}) {
-            return ok({ path: `${payload.remoteDir || '/'}/${payload.name || 'folder'}`.replace(/\/+/g, '/') }, '目录已创建');
+            return ok(
+                { path: `${payload.remoteDir || '/'}/${payload.name || 'folder'}`.replace(/\/+/g, '/') },
+                '目录已创建'
+            );
         },
         async remove() {
             return ok(null, '删除完成');
@@ -376,6 +388,21 @@ export function ensureRuntimeApis() {
             return Array.from(files)
                 .map(file => file.path || file.name || '')
                 .filter(Boolean);
+        }
+    };
+
+    window.updaterApi ||= {
+        async checkForUpdates() {
+            return fail('浏览器预览不执行更新检查');
+        },
+        async downloadUpdate() {
+            return fail('浏览器预览不执行更新下载');
+        },
+        async quitAndInstall() {
+            return fail('浏览器预览不执行更新安装');
+        },
+        async getCurrentVersion() {
+            return ok('1.0.0');
         }
     };
 }

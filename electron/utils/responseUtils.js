@@ -1,4 +1,4 @@
-// 统一 IPC 返回格式：{ status, msg, data }（对齐 NetNexus）
+// 统一 IPC 返回格式：{ status, msg, data }
 function successResponse(data = null, msg = '') {
     return { status: 'success', msg, data };
 }

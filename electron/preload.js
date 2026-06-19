@@ -41,6 +41,13 @@ contextBridge.exposeInMainWorld('sftpApi', {
             .filter(Boolean)
 });
 
+contextBridge.exposeInMainWorld('updaterApi', {
+    checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
+    downloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
+    quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
+    getCurrentVersion: () => ipcRenderer.invoke('updater:getCurrentVersion')
+});
+
 contextBridge.exposeInMainWorld('clipboardApi', {
     readText: () => clipboard.readText(),
     writeText: text => clipboard.writeText(String(text || ''))

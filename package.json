@@ -1,19 +1,152 @@
 {
     "name": "nexterm",
-    "version": "0.1.0",
-    "description": "类 Xshell 的跨平台远程接入终端（NetNexus 架构范式）",
+    "version": "1.0.0",
+    "description": "跨平台远程接入终端",
     "main": "electron/main.js",
-    "author": "jihuaibin",
+    "homepage": "https://github.com/jihuaib/NexTerm#readme",
+    "bugs": {
+        "url": "https://github.com/jihuaib/NexTerm/issues"
+    },
+    "author": {
+        "name": "jihuaibin",
+        "email": "jihuaib@163.com",
+        "url": "https://github.com/jihuaib"
+    },
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/jihuaib/NexTerm.git"
+    },
     "scripts": {
         "start": "vite",
         "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"npm:dev:electron\"",
         "dev:electron": "wait-on tcp:127.0.0.1:5273 && cross-env NODE_ENV=development electron .",
-        "postinstall": "electron-rebuild -f -w node-pty",
+        "install-deps:arch": "electron-builder install-app-deps",
+        "postinstall": "electron-rebuild -f -w node-pty && npm run install-deps:arch",
         "build": "vite build",
+        "lint": "eslint --ext .js,.cjs,.vue src electron scripts e2e vite.config.js",
+        "lint:fix": "eslint --fix --ext .js,.cjs,.vue src electron scripts e2e vite.config.js",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "pack": "npm run build && electron-builder --dir",
+        "pack:win": "npm run build && electron-builder --win --x64 --dir",
+        "pack:mac": "npm run build && electron-builder --mac --x64 --dir",
+        "pack:mac:arm64": "npm run build && electron-builder --mac --arm64 --dir",
+        "pack:mac:all": "npm run build && electron-builder --mac --dir",
+        "dist": "npm run build && electron-builder",
+        "dist:win": "npm run build && electron-builder --win --x64",
+        "dist:mac": "npm run build && electron-builder --mac --x64",
+        "dist:mac:arm64": "npm run build && electron-builder --mac --arm64",
+        "dist:mac:all": "npm run build && electron-builder --mac",
+        "release": "node scripts/release.js",
+        "release:win": "node scripts/release.js --win",
+        "release:mac": "node scripts/release.js --mac",
         "preview": "vite preview",
         "test:e2e": "npm run build && playwright test",
         "test:e2e:ci": "npm run build && playwright test --reporter=line"
+    },
+    "build": {
+        "appId": "com.jihuaib.nexterm",
+        "productName": "NexTerm",
+        "copyright": "Copyright © 2026 jihuaibin",
+        "files": [
+            "dist/**/*",
+            "electron/**/*",
+            "package.json",
+            "LICENSE"
+        ],
+        "extraResources": [
+            {
+                "from": "LICENSE",
+                "to": "LICENSE"
+            }
+        ],
+        "electronLanguages": [
+            "zh-CN"
+        ],
+        "asar": true,
+        "asarUnpack": [
+            "node_modules/node-pty/**/*"
+        ],
+        "npmRebuild": false,
+        "afterPack": "scripts/minify-electron-js.js",
+        "electronUpdaterCompatibility": ">=2.16",
+        "publish": {
+            "provider": "github",
+            "owner": "jihuaib",
+            "repo": "NexTerm",
+            "releaseType": "release"
+        },
+        "directories": {
+            "buildResources": "electron/assets",
+            "output": "release"
+        },
+        "win": {
+            "icon": "electron/assets/icon.ico",
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "${productName}-Setup-${version}-${os}-${arch}.${ext}",
+            "publisherName": "jihuaibin",
+            "verifyUpdateCodeSignature": false
+        },
+        "nsis": {
+            "allowToChangeInstallationDirectory": true,
+            "license": "LICENSE",
+            "oneClick": false,
+            "perMachine": false,
+            "differentialPackage": false
+        },
+        "mac": {
+            "icon": "electron/assets/icon.icns",
+            "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                },
+                {
+                    "target": "zip",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                }
+            ],
+            "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+            "category": "public.app-category.developer-tools",
+            "hardenedRuntime": false,
+            "gatekeeperAssess": false
+        },
+        "linux": {
+            "icon": "electron/assets/icon.png"
+        },
+        "dmg": {
+            "writeUpdateInfo": false,
+            "contents": [
+                {
+                    "x": 130,
+                    "y": 220
+                },
+                {
+                    "x": 410,
+                    "y": 220,
+                    "type": "link",
+                    "path": "/Applications"
+                }
+            ],
+            "window": {
+                "width": 540,
+                "height": 380
+            }
+        }
     },
     "dependencies": {
         "@lucide/vue": "^1.21.0",
@@ -21,17 +154,27 @@
         "@xterm/addon-search": "^0.16.0",
         "@xterm/xterm": "^5.5.0",
         "electron-store": "^8.2.0",
+        "electron-updater": "^6.1.7",
         "node-pty": "^1.1.0",
         "ssh2": "^1.17.0",
         "vue": "^3.4.0"
     },
     "devDependencies": {
+        "@babel/eslint-parser": "^7.29.7",
+        "@babel/preset-env": "^7.29.7",
         "@electron/rebuild": "^3.7.0",
         "@playwright/test": "^1.39.0",
         "@vitejs/plugin-vue": "^4.2.3",
         "concurrently": "^8.2.0",
         "cross-env": "^7.0.3",
         "electron": "^15.5.7",
+        "electron-builder": "^24.13.3",
+        "esbuild": "^0.18.20",
+        "eslint": "^8.57.1",
+        "eslint-config-prettier": "^9.1.2",
+        "eslint-plugin-import": "^2.32.0",
+        "eslint-plugin-vue": "^9.33.0",
+        "prettier": "^3.8.4",
         "vite": "^4.4.0",
         "wait-on": "^7.2.0"
     }

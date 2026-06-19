@@ -129,11 +129,13 @@ function wireSftp(sftp) {
     sftp.on('REALPATH', (reqid, targetPath) => {
         const resolved = normalizeRemotePath(targetPath);
         const entry = entryAt(resolved) || { name: posixPath.basename(resolved), type: 'dir' };
-        sftp.name(reqid, [{
-            filename: resolved,
-            longname: longnameFor(entry),
-            attrs: attrsFor(entry)
-        }]);
+        sftp.name(reqid, [
+            {
+                filename: resolved,
+                longname: longnameFor(entry),
+                attrs: attrsFor(entry)
+            }
+        ]);
     });
 
     sftp.on('STAT', sendAttrs);
@@ -159,11 +161,14 @@ function wireSftp(sftp) {
             return;
         }
         state.sent = true;
-        sftp.name(reqid, ROOT[state.path].map(entry => ({
-            filename: entry.name,
-            longname: longnameFor(entry),
-            attrs: attrsFor(entry)
-        })));
+        sftp.name(
+            reqid,
+            ROOT[state.path].map(entry => ({
+                filename: entry.name,
+                longname: longnameFor(entry),
+                attrs: attrsFor(entry)
+            }))
+        );
     });
 
     sftp.on('CLOSE', (reqid, handle) => {
@@ -276,24 +281,25 @@ async function startTestSshServer() {
         port: server.address().port,
         username,
         password,
-        close: () => new Promise(resolve => {
-            let settled = false;
-            const done = () => {
-                if (settled) return;
-                settled = true;
-                resolve();
-            };
-            for (const client of clients) {
-                try {
-                    client.end();
-                    client.destroy?.();
-                } catch (_err) {
-                    /* test cleanup */
+        close: () =>
+            new Promise(resolve => {
+                let settled = false;
+                const done = () => {
+                    if (settled) return;
+                    settled = true;
+                    resolve();
+                };
+                for (const client of clients) {
+                    try {
+                        client.end();
+                        client.destroy?.();
+                    } catch (_err) {
+                        /* test cleanup */
+                    }
                 }
-            }
-            server.close(done);
-            setTimeout(done, 1000).unref();
-        })
+                server.close(done);
+                setTimeout(done, 1000).unref();
+            })
     };
 }
 

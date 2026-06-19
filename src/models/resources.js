@@ -80,7 +80,8 @@ export function normalizeSessionProfile(session = {}, defaults = {}) {
 
 export function normalizeFileEntry(entry = {}, parentId = null) {
     const path = entry.path || (parentId ? `${parentId}/${entry.name || ''}` : '/');
-    const isFolder = entry.type === RESOURCE_NODE_TYPES.FILE_FOLDER || entry.isDirectory || Array.isArray(entry.children);
+    const isFolder =
+        entry.type === RESOURCE_NODE_TYPES.FILE_FOLDER || entry.isDirectory || Array.isArray(entry.children);
     const id = entry.id || `file:${path}`;
     return {
         id,

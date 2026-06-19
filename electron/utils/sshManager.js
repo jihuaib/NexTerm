@@ -83,7 +83,9 @@ function resolveRemotePath(base, target) {
 }
 
 function parentRemotePath(filePath) {
-    const parts = String(filePath || '/').split('/').filter(Boolean);
+    const parts = String(filePath || '/')
+        .split('/')
+        .filter(Boolean);
     parts.pop();
     return parts.length ? `/${parts.join('/')}` : '/';
 }
@@ -354,15 +356,17 @@ class SshManager {
         });
 
         conn.on('ready', () => {
-            this.ensureSftp(sessionId).then(sftp => {
-                sftp.realpath('.', (err, realPath) => {
-                    if (!err && realPath) {
-                        ctx.cwd = normalizeRemotePath(realPath);
-                        ctx.home = ctx.cwd;
-                        this.emit(SFTP_EVT.CWD, { sessionId, path: ctx.cwd });
-                    }
-                });
-            }).catch(() => {});
+            this.ensureSftp(sessionId)
+                .then(sftp => {
+                    sftp.realpath('.', (err, realPath) => {
+                        if (!err && realPath) {
+                            ctx.cwd = normalizeRemotePath(realPath);
+                            ctx.home = ctx.cwd;
+                            this.emit(SFTP_EVT.CWD, { sessionId, path: ctx.cwd });
+                        }
+                    });
+                })
+                .catch(() => {});
 
             conn.shell(
                 {
@@ -525,7 +529,8 @@ class SshManager {
         const { entries } = await this.list(sessionId, sourcePath);
         for (const entry of entries) {
             const childLocal = path.join(destinationPath, entry.name);
-            if (entry.type === 'file-folder') await this.downloadDirectory(sessionId, entry.path, childLocal, onProgress);
+            if (entry.type === 'file-folder')
+                await this.downloadDirectory(sessionId, entry.path, childLocal, onProgress);
             else await this.downloadFile(sessionId, entry.path, childLocal, onProgress);
         }
     }

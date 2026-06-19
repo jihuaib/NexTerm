@@ -24,9 +24,9 @@ async function closeElectronApp(electronApp) {
     const childProcess = electronApp.process();
     const exitPromise = childProcess
         ? new Promise(resolve => {
-            if (childProcess.exitCode !== null || childProcess.signalCode !== null) resolve();
-            else childProcess.once('exit', resolve);
-        })
+              if (childProcess.exitCode !== null || childProcess.signalCode !== null) resolve();
+              else childProcess.once('exit', resolve);
+          })
         : Promise.resolve();
 
     try {
@@ -45,10 +45,7 @@ async function closeElectronApp(electronApp) {
         await Promise.race([exitPromise, new Promise(resolve => setTimeout(resolve, 1000))]);
     }
 
-    await Promise.race([
-        electronApp.close().catch(() => {}),
-        new Promise(resolve => setTimeout(resolve, 1000))
-    ]);
+    await Promise.race([electronApp.close().catch(() => {}), new Promise(resolve => setTimeout(resolve, 1000))]);
 }
 
 test.beforeEach(async ({}, testInfo) => {
@@ -68,6 +65,7 @@ test.beforeEach(async ({}, testInfo) => {
     const page = await electronApp.firstWindow();
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByText('NexTerm')).toBeVisible();
+    await expect(page.locator('.brand__mark')).toHaveAttribute('src', /icon-.*\.svg/);
 
     testInfo.e2e = { electronApp, page, userDataDir, shellCwd, consoleErrors: [], cleanups: [] };
 
@@ -143,7 +141,7 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
 
     await openSettings(page);
 
-    for (const category of ['外观', '终端', '快捷键', '连接', '文件', '日志', '关于']) {
+    for (const category of ['外观', '终端', '快捷键', '连接', '文件', '日志', '更新', '关于']) {
         await expect(settingsCategory(page, category)).toBeVisible();
     }
 
@@ -151,7 +149,7 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await expect(settingsHeading(page, '主题')).toBeVisible();
     await expect(settingsHeading(page, '字体')).toBeVisible();
     await expect(settingsHeading(page, '布局')).toBeVisible();
-    await page.getByRole('button', { name: '浅色' }).click();
+    await settingsPanel(page).locator('.nx-swatch').filter({ hasText: '浅色' }).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     await fillRowInput(page, '会话侧栏宽度', '320');
 
@@ -202,6 +200,13 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await selectRowValue(page, '日志行格式', '[{datetime}] [{session}] {text}');
     await toggleRow(page, '清理控制字符');
 
+    await chooseSettingsCategory(page, '更新');
+    await expect(settingsHeading(page, '版本')).toBeVisible();
+    await expect(settingsHeading(page, '操作')).toBeVisible();
+    await expect(settingsHeading(page, '自动更新')).toBeVisible();
+    await expect(page.getByText('当前版本')).toBeVisible();
+    await toggleRow(page, '自动下载更新');
+
     await chooseSettingsCategory(page, '关于');
     await expect(page.getByText('SSH、Telnet、Local Shell、SFTP 文件面板与终端日志')).toBeVisible();
 
@@ -220,6 +225,8 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     expect(settings.settings.terminalSelectToCopy).toBe(true);
     expect(settings.settings.terminalRightClickAction).toBe('paste');
     expect(settings.settings.terminalContextMenuTrigger).toBe('ctrl');
+    expect(settings.settings.updateAutoCheckOnStartup).toBe(true);
+    expect(settings.settings.updateAutoDownload).toBe(true);
     expect(settings.settings.connectionAutoReconnect).toBe(false);
     expect(settings.settings.connectionReconnectDelay).toBe(4);
     expect(settings.settings.connectionReconnectMaxAttempts).toBe(2);
@@ -283,7 +290,9 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
 
     await page.locator('.resource-row', { hasText: 'E2E Local' }).dblclick();
     await expect(page.locator('.tab', { hasText: 'E2E Local' })).toBeVisible();
-    await expect(page.locator('.tab', { hasText: 'E2E Local' }).locator('.dot.connected')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.tab', { hasText: 'E2E Local' }).locator('.dot.connected')).toBeVisible({
+        timeout: 15_000
+    });
 
     await page.locator('.xterm').click();
     await page.keyboard.type('echo __NEXTERM_E2E__');
@@ -298,7 +307,9 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await page.keyboard.press('Escape');
     await expect(page.locator('.search-panel')).toHaveCount(0);
 
-    await testInfo.e2e.electronApp.evaluate(({ clipboard }) => clipboard.writeText('echo __NEXTERM_RIGHT_CLICK_PASTE__\r'));
+    await testInfo.e2e.electronApp.evaluate(({ clipboard }) =>
+        clipboard.writeText('echo __NEXTERM_RIGHT_CLICK_PASTE__\r')
+    );
     await page.locator('.xterm').click({ button: 'right' });
     await expect(page.locator('.xterm')).toContainText('__NEXTERM_RIGHT_CLICK_PASTE__', { timeout: 10_000 });
 
@@ -308,7 +319,9 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
 
     const sidebarBefore = await page.locator('.sidebar').boundingBox();
     await dragElementBy(page, page.locator('.sidebar-resizer'), 58, 0);
-    await expect.poll(async () => (await page.locator('.sidebar').boundingBox()).width).toBeGreaterThan(sidebarBefore.width + 30);
+    await expect
+        .poll(async () => (await page.locator('.sidebar').boundingBox()).width)
+        .toBeGreaterThan(sidebarBefore.width + 30);
 
     await page.getByRole('button', { name: '新建右侧标签组' }).first().click();
     await expect(page.locator('.workspace .tabs-empty').filter({ hasText: '空标签组' }).first()).toBeVisible();
@@ -350,7 +363,9 @@ test('ssh session connects and sftp directory renders from the UI', async ({}, t
     await expect(page.locator('.resource-row', { hasText: 'E2E SSH' })).toBeVisible();
 
     await page.locator('.resource-row', { hasText: 'E2E SSH' }).dblclick();
-    await expect(page.locator('.tab', { hasText: 'E2E SSH' }).locator('.dot.connected')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.tab', { hasText: 'E2E SSH' }).locator('.dot.connected')).toBeVisible({
+        timeout: 15_000
+    });
     await expect(page.locator('.xterm')).toContainText('mock ssh ready', { timeout: 10_000 });
 
     const knownHostsPath = path.join(userDataDir, 'data', 'known_hosts.json');

@@ -1,4 +1,4 @@
-// 统一事件发送器：主进程 -> 渲染进程，统一走 'unified-event' 频道（对齐 NetNexus）
+// 统一事件发送器：主进程 -> 渲染进程，统一走 'unified-event' 频道
 class EventDispatcher {
     constructor() {
         this.webContents = null;

@@ -24,7 +24,9 @@ function writeKnownHosts(data) {
 }
 
 function hostKey(host, port) {
-    return `${String(host || '').trim().toLowerCase()}:${Number(port) || 22}`;
+    return `${String(host || '')
+        .trim()
+        .toLowerCase()}:${Number(port) || 22}`;
 }
 
 function verifyKnownHost(options = {}, fingerprint = '') {

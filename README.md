@@ -1,6 +1,6 @@
 # NexTerm
 
-类 Xshell 的跨平台远程接入终端，采用与 NetNexus 一致的架构范式（Electron 主进程 / preload / Vue 3 渲染进程，按模块拆分的 `App` + IPC、`EventDispatcher` 统一事件、`{status,msg,data}` 返回格式）。
+跨平台远程接入终端，采用 Electron 主进程 / preload / Vue 3 渲染进程架构，按模块拆分 `App` + IPC、`EventDispatcher` 统一事件、`{status,msg,data}` 返回格式。
 
 当前为**基础版**：Telnet 终端、本地 Shell、主题切换、会话管理。样式/主题/组件外观全部自研封装；协议后续接入 SSH（`ssh2`，走 worker 线程），终端渲染使用 `xterm.js`。
 

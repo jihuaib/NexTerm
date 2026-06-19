@@ -4,8 +4,9 @@ import ConnectionSection from '../components/settings/ConnectionSection.vue';
 import FilesSection from '../components/settings/FilesSection.vue';
 import LogsSection from '../components/settings/LogsSection.vue';
 import ShortcutsSection from '../components/settings/ShortcutsSection.vue';
+import UpdateSection from '../components/settings/UpdateSection.vue';
 import AboutSection from '../components/settings/AboutSection.vue';
-import { FileText, FolderOpen, Info, Keyboard, Network, Palette, SquareTerminal } from '@lucide/vue';
+import { FileText, FolderOpen, Info, Keyboard, Network, Palette, RefreshCw, SquareTerminal } from '@lucide/vue';
 
 // 设置分类注册表：新增一类 = 写一个 section 组件 + 在此加一行
 export const SETTINGS_CATEGORIES = [
@@ -15,5 +16,6 @@ export const SETTINGS_CATEGORIES = [
     { id: 'connection', label: '连接', desc: '默认值、重连与 SSH 安全', icon: Network, component: ConnectionSection },
     { id: 'files', label: '文件', desc: 'SFTP 文件面板与远程目录行为', icon: FolderOpen, component: FilesSection },
     { id: 'logs', label: '日志', desc: '终端缓冲区日志写入与格式', icon: FileText, component: LogsSection },
+    { id: 'update', label: '更新', desc: '版本检查、下载与安装', icon: RefreshCw, component: UpdateSection },
     { id: 'about', label: '关于', desc: '版本与后续能力规划', icon: Info, component: AboutSection }
 ];

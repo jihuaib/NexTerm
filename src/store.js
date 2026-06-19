@@ -59,7 +59,9 @@ export const DEFAULT_SETTINGS = {
     terminalPasteShortcut: 'CmdOrCtrl+Shift+V',
     terminalSelectToCopy: false,
     terminalRightClickAction: 'paste',
-    terminalContextMenuTrigger: 'shift'
+    terminalContextMenuTrigger: 'shift',
+    updateAutoCheckOnStartup: true,
+    updateAutoDownload: false
 };
 
 const rootLeaf = makeLeaf(null);
@@ -264,7 +266,7 @@ export function setActivePane(paneId) {
     store.activePaneId = paneId;
 }
 
-// Xshell 模型：打开会话 = 加入当前 Tab Group，不自动分屏
+// 打开会话 = 加入当前 Tab Group，不自动分屏
 export function openSession(def) {
     const session = makeRuntimeSession(def);
     const active = findLeaf(store.layout, store.activePaneId);
@@ -291,7 +293,7 @@ export function closeGroupTab(paneId, sessionId) {
     }
 }
 
-// Xshell 模型：拖已打开 Tab 到其他组 = 移动；拖到边缘 = 创建新 Tab Group
+// 拖已打开 Tab 到其他组 = 移动；拖到边缘 = 创建新 Tab Group
 export function moveOpenSessionIntoPane(targetPaneId, payload, zone) {
     const source = findLeaf(store.layout, payload.sourcePaneId);
     const target = findLeaf(store.layout, targetPaneId);

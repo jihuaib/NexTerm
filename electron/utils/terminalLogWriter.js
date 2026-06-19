@@ -200,9 +200,8 @@ class TerminalLogWriter {
     flushLineBuffer(ctx, settings = this.getSettings()) {
         if (!ctx?.lineBuffer) return;
         const lineFormat = String(settings.terminalLogLineFormat || '{text}');
-        const output = lineFormat.trim() === '{text}'
-            ? ctx.lineBuffer
-            : this.formatLine(ctx, settings, ctx.lineBuffer) + os.EOL;
+        const output =
+            lineFormat.trim() === '{text}' ? ctx.lineBuffer : this.formatLine(ctx, settings, ctx.lineBuffer) + os.EOL;
         ctx.lineBuffer = '';
         if (output) this.enqueueAppend(ctx, settings, output);
     }

@@ -12,7 +12,11 @@
                     <div class="nx-row__desc">终端光标是否闪烁</div>
                 </div>
                 <div class="nx-row__control">
-                    <button class="nx-toggle" :class="{ on: s.cursorBlink }" @click="update({ cursorBlink: !s.cursorBlink })"></button>
+                    <button
+                        class="nx-toggle"
+                        :class="{ on: s.cursorBlink }"
+                        @click="update({ cursorBlink: !s.cursorBlink })"
+                    />
                 </div>
             </div>
 
@@ -21,7 +25,11 @@
                     <div class="nx-row__label">光标样式</div>
                 </div>
                 <div class="nx-row__control">
-                    <select class="nx-select" :value="s.cursorStyle" @change="update({ cursorStyle: $event.target.value })">
+                    <select
+                        class="nx-select"
+                        :value="s.cursorStyle"
+                        @change="update({ cursorStyle: $event.target.value })"
+                    >
                         <option value="block">块状 block</option>
                         <option value="underline">下划线 underline</option>
                         <option value="bar">竖线 bar</option>
@@ -51,15 +59,15 @@
 </template>
 
 <script setup>
-import { store, updateSettings } from '../../store';
+    import { store, updateSettings } from '../../store';
 
-const s = store.settings;
+    const s = store.settings;
 
-function update(patch) {
-    updateSettings(patch);
-}
+    function update(patch) {
+        updateSettings(patch);
+    }
 
-function clamp(v) {
-    return Math.min(100000, Math.max(100, Number(v) || 1000));
-}
+    function clamp(v) {
+        return Math.min(100000, Math.max(100, Number(v) || 1000));
+    }
 </script>

@@ -1,0 +1,134 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - 'v*'
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: 'Release tag, for example v0.1.0'
+                required: true
+                type: string
+
+permissions:
+    contents: write
+
+env:
+    CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    NODE_VERSION: '16.20.2'
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+jobs:
+    build-windows:
+        name: Build Windows
+        runs-on: windows-2022
+        env:
+            GYP_MSVS_VERSION: '2022'
+            npm_config_msvs_version: '2022'
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.inputs.tag || github.ref }}
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ env.NODE_VERSION }}
+                  cache: npm
+
+            - name: Verify Node.js version
+              shell: bash
+              run: node -e "if (process.version !== 'v' + process.env.NODE_VERSION) { throw new Error('Expected Node.js v' + process.env.NODE_VERSION + ', got ' + process.version); }"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build Windows installer
+              run: npm run dist:win -- --publish never
+
+            - name: Upload Windows artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: windows
+                  path: |
+                      release/*.exe
+                      release/latest.yml
+                      release/*.blockmap
+                  if-no-files-found: error
+                  retention-days: 7
+
+    build-macos:
+        name: Build macOS
+        runs-on: macos-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.inputs.tag || github.ref }}
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ env.NODE_VERSION }}
+                  cache: npm
+
+            - name: Verify Node.js version
+              run: node -e "if (process.version !== 'v' + process.env.NODE_VERSION) { throw new Error('Expected Node.js v' + process.env.NODE_VERSION + ', got ' + process.version); }"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build macOS packages
+              run: npm run dist:mac:all -- --publish never
+
+            - name: Upload macOS artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: macos
+                  path: |
+                      release/*.dmg
+                      release/*.zip
+                      release/latest-mac.yml
+                      release/*.blockmap
+                  if-no-files-found: error
+                  retention-days: 7
+
+    publish:
+        name: Publish GitHub Release
+        needs:
+            - build-windows
+            - build-macos
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        env:
+            RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.inputs.tag || github.ref }}
+
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: release-assets
+                  merge-multiple: true
+
+            - name: List release assets
+              run: ls -lah release-assets
+
+            - name: Create or update release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+                    gh release upload "$RELEASE_TAG" release-assets/* --clobber
+                  else
+                    gh release create "$RELEASE_TAG" release-assets/* \
+                      --title "NexTerm $RELEASE_TAG" \
+                      --notes "自动发布 $RELEASE_TAG" \
+                      --target "$GITHUB_SHA"
+                  fi

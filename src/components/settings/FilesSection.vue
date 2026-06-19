@@ -17,7 +17,7 @@
                         :class="{ on: s.sftpFollowConsole }"
                         :aria-pressed="s.sftpFollowConsole ? 'true' : 'false'"
                         @click="update({ sftpFollowConsole: !s.sftpFollowConsole })"
-                    ></button>
+                    />
                 </div>
             </div>
         </section>
@@ -39,7 +39,7 @@
                         :class="{ on: s.sftpShowHiddenFiles }"
                         :aria-pressed="s.sftpShowHiddenFiles ? 'true' : 'false'"
                         @click="update({ sftpShowHiddenFiles: !s.sftpShowHiddenFiles })"
-                    ></button>
+                    />
                 </div>
             </div>
         </section>
@@ -47,11 +47,11 @@
 </template>
 
 <script setup>
-import { store, updateSettings } from '../../store';
+    import { store, updateSettings } from '../../store';
 
-const s = store.settings;
+    const s = store.settings;
 
-function update(patch) {
-    updateSettings(patch);
-}
+    function update(patch) {
+        updateSettings(patch);
+    }
 </script>

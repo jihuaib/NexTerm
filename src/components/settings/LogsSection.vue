@@ -17,7 +17,7 @@
                         :class="{ on: s.terminalLogEnabled }"
                         :aria-pressed="s.terminalLogEnabled ? 'true' : 'false'"
                         @click="update({ terminalLogEnabled: !s.terminalLogEnabled })"
-                    ></button>
+                    />
                 </div>
             </div>
 
@@ -50,7 +50,11 @@
                     <div class="nx-row__desc">支持 date、time、session、protocol、host、user、id</div>
                 </div>
                 <div class="nx-row__control nx-row__control--stack">
-                    <select class="nx-select nx-select--wide" :value="s.terminalLogFileFormat" @change="applyFileFormat($event.target.value)">
+                    <select
+                        class="nx-select nx-select--wide"
+                        :value="s.terminalLogFileFormat"
+                        @change="applyFileFormat($event.target.value)"
+                    >
                         <option v-for="option in fileFormatOptions" :key="option.value" :value="option.value">
                             {{ option.label }}
                         </option>
@@ -59,7 +63,9 @@
                     <input
                         class="nx-input nx-input--format"
                         :value="s.terminalLogFileFormat"
-                        @change="update({ terminalLogFileFormat: normalizeFormat($event.target.value, defaultFileFormat) })"
+                        @change="
+                            update({ terminalLogFileFormat: normalizeFormat($event.target.value, defaultFileFormat) })
+                        "
                     />
                 </div>
             </div>
@@ -70,7 +76,11 @@
                     <div class="nx-row__desc">支持 datetime、time、session、protocol、host、user、text</div>
                 </div>
                 <div class="nx-row__control nx-row__control--stack">
-                    <select class="nx-select nx-select--wide" :value="s.terminalLogLineFormat" @change="applyLineFormat($event.target.value)">
+                    <select
+                        class="nx-select nx-select--wide"
+                        :value="s.terminalLogLineFormat"
+                        @change="applyLineFormat($event.target.value)"
+                    >
                         <option v-for="option in lineFormatOptions" :key="option.value" :value="option.value">
                             {{ option.label }}
                         </option>
@@ -79,7 +89,9 @@
                     <input
                         class="nx-input nx-input--format"
                         :value="s.terminalLogLineFormat"
-                        @change="update({ terminalLogLineFormat: normalizeFormat($event.target.value, defaultLineFormat) })"
+                        @change="
+                            update({ terminalLogLineFormat: normalizeFormat($event.target.value, defaultLineFormat) })
+                        "
                     />
                 </div>
             </div>
@@ -102,7 +114,7 @@
                         :class="{ on: s.terminalLogStripAnsi }"
                         :aria-pressed="s.terminalLogStripAnsi ? 'true' : 'false'"
                         @click="update({ terminalLogStripAnsi: !s.terminalLogStripAnsi })"
-                    ></button>
+                    />
                 </div>
             </div>
         </section>
@@ -110,56 +122,60 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { store, updateSettings } from '../../store';
-import { notifyError } from '../../services/notify';
+    import { computed } from 'vue';
+    import { store, updateSettings } from '../../store';
+    import { notifyError } from '../../services/notify';
 
-const s = store.settings;
-const defaultFileFormat = '{date}/{time}-{session}-{id}.log';
-const defaultLineFormat = '{text}';
-const fileFormatOptions = [
-    { label: '按日期目录', value: defaultFileFormat },
-    { label: '按协议主机', value: '{date}/{protocol}-{host}-{id}.log' },
-    { label: '按会话目录', value: '{session}/{date}-{time}.log' }
-];
-const lineFormatOptions = [
-    { label: '原始输出', value: defaultLineFormat },
-    { label: '时间 + 内容', value: '[{datetime}] {text}' },
-    { label: '会话 + 内容', value: '[{datetime}] [{session}] {text}' }
-];
-const hasFileFormatPreset = computed(() => fileFormatOptions.some(option => option.value === s.terminalLogFileFormat));
-const hasLineFormatPreset = computed(() => lineFormatOptions.some(option => option.value === s.terminalLogLineFormat));
+    const s = store.settings;
+    const defaultFileFormat = '{date}/{time}-{session}-{id}.log';
+    const defaultLineFormat = '{text}';
+    const fileFormatOptions = [
+        { label: '按日期目录', value: defaultFileFormat },
+        { label: '按协议主机', value: '{date}/{protocol}-{host}-{id}.log' },
+        { label: '按会话目录', value: '{session}/{date}-{time}.log' }
+    ];
+    const lineFormatOptions = [
+        { label: '原始输出', value: defaultLineFormat },
+        { label: '时间 + 内容', value: '[{datetime}] {text}' },
+        { label: '会话 + 内容', value: '[{datetime}] [{session}] {text}' }
+    ];
+    const hasFileFormatPreset = computed(() =>
+        fileFormatOptions.some(option => option.value === s.terminalLogFileFormat)
+    );
+    const hasLineFormatPreset = computed(() =>
+        lineFormatOptions.some(option => option.value === s.terminalLogLineFormat)
+    );
 
-function update(patch) {
-    updateSettings(patch);
-}
-
-function normalizeFormat(value, fallback) {
-    return String(value || '').trim() || fallback;
-}
-
-function applyFileFormat(value) {
-    update({ terminalLogFileFormat: normalizeFormat(value, defaultFileFormat) });
-}
-
-function applyLineFormat(value) {
-    update({ terminalLogLineFormat: normalizeFormat(value, defaultLineFormat) });
-}
-
-async function chooseLogDirectory() {
-    if (!window.settingsApi?.selectLogDirectory) {
-        notifyError('当前环境不支持选择目录');
-        return;
+    function update(patch) {
+        updateSettings(patch);
     }
-    try {
-        const res = await window.settingsApi.selectLogDirectory();
-        if (res.status !== 'success') {
-            notifyError(res.msg || '选择日志目录失败');
+
+    function normalizeFormat(value, fallback) {
+        return String(value || '').trim() || fallback;
+    }
+
+    function applyFileFormat(value) {
+        update({ terminalLogFileFormat: normalizeFormat(value, defaultFileFormat) });
+    }
+
+    function applyLineFormat(value) {
+        update({ terminalLogLineFormat: normalizeFormat(value, defaultLineFormat) });
+    }
+
+    async function chooseLogDirectory() {
+        if (!window.settingsApi?.selectLogDirectory) {
+            notifyError('当前环境不支持选择目录');
             return;
         }
-        if (!res.data?.canceled && res.data?.path) update({ terminalLogDirectory: res.data.path });
-    } catch (err) {
-        notifyError(err?.message || '选择日志目录失败');
+        try {
+            const res = await window.settingsApi.selectLogDirectory();
+            if (res.status !== 'success') {
+                notifyError(res.msg || '选择日志目录失败');
+                return;
+            }
+            if (!res.data?.canceled && res.data?.path) update({ terminalLogDirectory: res.data.path });
+        } catch (err) {
+            notifyError(err?.message || '选择日志目录失败');
+        }
     }
-}
 </script>

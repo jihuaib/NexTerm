@@ -32,16 +32,21 @@ function defaultCwd(cwd) {
     const requested = normalizeText(cwd);
     if (requested) return requested;
     if (process.platform === 'win32') {
-        return process.env.USERPROFILE
-            || (process.env.HOMEDRIVE && process.env.HOMEPATH ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}` : '')
-            || os.homedir()
-            || process.cwd();
+        return (
+            process.env.USERPROFILE ||
+            (process.env.HOMEDRIVE && process.env.HOMEPATH ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}` : '') ||
+            os.homedir() ||
+            process.cwd()
+        );
     }
     return process.env.HOME || os.homedir() || process.cwd();
 }
 
 function shellBasename(shell) {
-    return path.basename(shell || '').toLowerCase().replace(/\.exe$/, '');
+    return path
+        .basename(shell || '')
+        .toLowerCase()
+        .replace(/\.exe$/, '');
 }
 
 function defaultShellArgs(shell) {
@@ -97,7 +102,11 @@ function nativeModuleHint(err) {
 
 function spawnError(shell, err) {
     const reason = err?.message || String(err || 'unknown error');
-    if (/NODE_MODULE_VERSION|module version|Module did not self-register|invalid ELF header|mach-o|dynamic link/i.test(reason)) {
+    if (
+        /NODE_MODULE_VERSION|module version|Module did not self-register|invalid ELF header|mach-o|dynamic link/i.test(
+            reason
+        )
+    ) {
         return nativeModuleHint(err);
     }
     return `无法启动本地 Shell (${shell}): ${reason}`;

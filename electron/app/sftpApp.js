@@ -72,7 +72,8 @@ class SftpApp {
                     defaultPath: sftpDownloadDirectory(),
                     properties: ['openDirectory', 'createDirectory']
                 });
-                if (result.canceled || !result.filePaths.length) return successResponse({ canceled: true }, '已取消下载');
+                if (result.canceled || !result.filePaths.length)
+                    return successResponse({ canceled: true }, '已取消下载');
                 destinationPath = path.join(result.filePaths[0], name);
             } else {
                 const result = await this.showSaveDialog(event, {
@@ -129,7 +130,8 @@ class SftpApp {
                     defaultPath: sftpUploadDirectory(),
                     properties: ['openFile', 'openDirectory', 'multiSelections']
                 });
-                if (result.canceled || !result.filePaths.length) return successResponse({ canceled: true }, '已取消上传');
+                if (result.canceled || !result.filePaths.length)
+                    return successResponse({ canceled: true }, '已取消上传');
                 filePaths = result.filePaths;
             }
 

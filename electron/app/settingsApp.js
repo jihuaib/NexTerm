@@ -37,7 +37,10 @@ const STATIC_DEFAULTS = {
     terminalPasteShortcut: 'CmdOrCtrl+Shift+V',
     terminalSelectToCopy: false,
     terminalRightClickAction: 'paste',
-    terminalContextMenuTrigger: 'shift'
+    terminalContextMenuTrigger: 'shift',
+    // 更新
+    updateAutoCheckOnStartup: true,
+    updateAutoDownload: false
 };
 
 function getDefaults() {
@@ -51,8 +54,9 @@ function getDefaults() {
  * 应用设置：主题、字号等
  */
 class SettingsApp {
-    constructor(ipcMain, store) {
+    constructor(ipcMain, store, onSave = null) {
         this.store = store;
+        this.onSave = typeof onSave === 'function' ? onSave : null;
         ipcMain.handle('settings:get', this.handleGet.bind(this));
         ipcMain.handle('settings:save', this.handleSave.bind(this));
         ipcMain.handle('settings:select-log-directory', this.handleSelectLogDirectory.bind(this));
@@ -70,6 +74,7 @@ class SettingsApp {
         try {
             const merged = { ...getDefaults(), ...this.store.get(STORE_KEY, {}), ...(settings || {}) };
             this.store.set(STORE_KEY, merged);
+            if (this.onSave) this.onSave(merged);
             return successResponse(merged, '设置已保存');
         } catch (err) {
             return errorResponse('保存设置失败: ' + err.message);
@@ -98,5 +103,8 @@ class SettingsApp {
         }
     }
 }
+
+SettingsApp.getDefaults = getDefaults;
+SettingsApp.STORE_KEY = STORE_KEY;
 
 module.exports = SettingsApp;

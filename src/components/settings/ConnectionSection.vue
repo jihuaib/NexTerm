@@ -12,7 +12,11 @@
                     <div class="nx-row__desc">新建会话时的默认协议</div>
                 </div>
                 <div class="nx-row__control">
-                    <select class="nx-select" :value="s.defaultProtocol" @change="update({ defaultProtocol: $event.target.value })">
+                    <select
+                        class="nx-select"
+                        :value="s.defaultProtocol"
+                        @change="update({ defaultProtocol: $event.target.value })"
+                    >
                         <option value="telnet">Telnet</option>
                         <option value="ssh">SSH / SFTP</option>
                         <option value="local">Local Shell</option>
@@ -92,7 +96,7 @@
                         :class="{ on: s.connectionAutoReconnect }"
                         :aria-pressed="s.connectionAutoReconnect ? 'true' : 'false'"
                         @click="update({ connectionAutoReconnect: !s.connectionAutoReconnect })"
-                    ></button>
+                    />
                 </div>
             </div>
 
@@ -148,7 +152,7 @@
                         :class="{ on: s.sshKnownHostsEnabled }"
                         :aria-pressed="s.sshKnownHostsEnabled ? 'true' : 'false'"
                         @click="update({ sshKnownHostsEnabled: !s.sshKnownHostsEnabled })"
-                    ></button>
+                    />
                 </div>
             </div>
         </section>
@@ -156,23 +160,23 @@
 </template>
 
 <script setup>
-import { store, updateSettings } from '../../store';
+    import { store, updateSettings } from '../../store';
 
-const s = store.settings;
+    const s = store.settings;
 
-function update(patch) {
-    updateSettings(patch);
-}
+    function update(patch) {
+        updateSettings(patch);
+    }
 
-function clamp(v) {
-    return Math.min(65535, Math.max(1, Number(v) || 23));
-}
+    function clamp(v) {
+        return Math.min(65535, Math.max(1, Number(v) || 23));
+    }
 
-function clampDelay(v) {
-    return Math.min(60, Math.max(1, Number(v) || 3));
-}
+    function clampDelay(v) {
+        return Math.min(60, Math.max(1, Number(v) || 3));
+    }
 
-function clampAttempts(v) {
-    return Math.min(20, Math.max(1, Number(v) || 5));
-}
+    function clampAttempts(v) {
+        return Math.min(20, Math.max(1, Number(v) || 5));
+    }
 </script>

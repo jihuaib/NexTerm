@@ -7,7 +7,6 @@ const TerminalLogWriter = require('../utils/terminalLogWriter');
 
 /**
  * 终端连接编排：在主进程内按协议管理多会话
- * （沿用 NetNexus 中 TCP/UDP 工具在主进程运行的范式；SSH 后续走 worker 线程）
  */
 class TelnetApp {
     constructor(ipcMain, dispatcher, store) {

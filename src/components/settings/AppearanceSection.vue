@@ -22,9 +22,9 @@
                             @click="update({ themeId: t.id })"
                         >
                             <span class="nx-swatch__chip">
-                                <i></i>
-                                <i></i>
-                                <i></i>
+                                <i />
+                                <i />
+                                <i />
                             </span>
                             <span>{{ t.name }}</span>
                         </button>
@@ -57,7 +57,11 @@
                     <div class="nx-row__desc">等宽字体，跨平台回退</div>
                 </div>
                 <div class="nx-row__control">
-                    <select class="nx-select" :value="s.fontFamily" @change="update({ fontFamily: $event.target.value })">
+                    <select
+                        class="nx-select"
+                        :value="s.fontFamily"
+                        @change="update({ fontFamily: $event.target.value })"
+                    >
                         <option v-for="f in fonts" :key="f.value" :value="f.value">{{ f.label }}</option>
                     </select>
                 </div>
@@ -92,32 +96,32 @@
 </template>
 
 <script setup>
-import { store, updateSettings } from '../../store';
-import { THEME_LIST, THEMES } from '../../theme/themes';
+    import { store, updateSettings } from '../../store';
+    import { THEME_LIST, THEMES } from '../../theme/themes';
 
-const s = store.settings;
-const themes = THEME_LIST.map(t => ({
-    ...t,
-    bg: THEMES[t.id].app['--nx-bg'],
-    surface: THEMES[t.id].app['--nx-surface'],
-    accent: THEMES[t.id].app['--nx-accent']
-}));
-const fonts = [
-    { label: 'Consolas / Menlo (默认)', value: "'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace" },
-    { label: 'Courier New', value: "'Courier New', monospace" },
-    { label: 'Cascadia Code', value: "'Cascadia Code', 'Consolas', monospace" },
-    { label: 'Monaco', value: "'Monaco', 'Menlo', monospace" }
-];
+    const s = store.settings;
+    const themes = THEME_LIST.map(t => ({
+        ...t,
+        bg: THEMES[t.id].app['--nx-bg'],
+        surface: THEMES[t.id].app['--nx-surface'],
+        accent: THEMES[t.id].app['--nx-accent']
+    }));
+    const fonts = [
+        { label: 'Consolas / Menlo (默认)', value: "'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace" },
+        { label: 'Courier New', value: "'Courier New', monospace" },
+        { label: 'Cascadia Code', value: "'Cascadia Code', 'Consolas', monospace" },
+        { label: 'Monaco', value: "'Monaco', 'Menlo', monospace" }
+    ];
 
-function update(patch) {
-    updateSettings(patch);
-}
+    function update(patch) {
+        updateSettings(patch);
+    }
 
-function stepFont(delta) {
-    update({ fontSize: Math.min(24, Math.max(8, s.fontSize + delta)) });
-}
+    function stepFont(delta) {
+        update({ fontSize: Math.min(24, Math.max(8, s.fontSize + delta)) });
+    }
 
-function clampSidebarWidth(v) {
-    return Math.min(460, Math.max(220, Number(v) || 278));
-}
+    function clampSidebarWidth(v) {
+        return Math.min(460, Math.max(220, Number(v) || 278));
+    }
 </script>

@@ -4,6 +4,7 @@ const SessionApp = require('./sessionApp');
 const SettingsApp = require('./settingsApp');
 const SftpApp = require('./sftpApp');
 const TelnetApp = require('./telnetApp');
+const UpdaterApp = require('./updaterApp');
 
 /**
  * 中央协调器：创建共享 store / 事件分发器，实例化并注册各功能模块
@@ -15,7 +16,8 @@ class SystemApp {
         this.dispatcher = new EventDispatcher();
 
         this.sessionApp = new SessionApp(ipcMain);
-        this.settingsApp = new SettingsApp(ipcMain, this.store);
+        this.updaterApp = new UpdaterApp(ipcMain, this.dispatcher, this.store);
+        this.settingsApp = new SettingsApp(ipcMain, this.store, settings => this.updaterApp.updateSettings(settings));
         this.telnetApp = new TelnetApp(ipcMain, this.dispatcher, this.store);
         this.sftpApp = new SftpApp(ipcMain, this.telnetApp.sshManager, this.dispatcher);
     }
@@ -30,6 +32,7 @@ class SystemApp {
     }
 
     cleanup() {
+        this.updaterApp.cleanup();
         this.telnetApp.cleanup();
         this.dispatcher.cleanup();
     }

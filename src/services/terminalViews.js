@@ -77,12 +77,16 @@ function createView(session, settings) {
     });
 
     view.disposables.push(term.onData(data => window.terminalApi.sendInput(view.sessionId, data)));
-    view.disposables.push(searchAddon.onDidChangeResults(result => {
-        view.searchResult = result || { resultIndex: 0, resultCount: 0 };
-    }));
-    view.disposables.push(term.onSelectionChange(() => {
-        if (typeof view.selectionHandler === 'function') view.selectionHandler(view.term.getSelection());
-    }));
+    view.disposables.push(
+        searchAddon.onDidChangeResults(result => {
+            view.searchResult = result || { resultIndex: 0, resultCount: 0 };
+        })
+    );
+    view.disposables.push(
+        term.onSelectionChange(() => {
+            if (typeof view.selectionHandler === 'function') view.selectionHandler(view.term.getSelection());
+        })
+    );
     view.disposables.push(
         eventBus.on('terminal:data', payload => {
             if (payload.sessionId !== view.sessionId || view.disposed) return;
