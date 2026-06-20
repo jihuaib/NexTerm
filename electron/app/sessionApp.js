@@ -25,6 +25,11 @@ function defaultPortForProtocol(protocol) {
     return 23;
 }
 
+function normalizeCredentialSaveMode(value) {
+    if (value === 'session' || value === 'prompt') return value;
+    return 'prompt';
+}
+
 function hasOwn(object, key) {
     return Object.prototype.hasOwnProperty.call(object || {}, key);
 }
@@ -65,9 +70,10 @@ function normalizeSession(def = {}, existing = null) {
         username: stringField(def, existing, 'username'),
         authType:
             def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
-        password: stringField(def, existing, 'password'),
         privateKeyPath: stringField(def, existing, 'privateKeyPath'),
-        passphrase: stringField(def, existing, 'passphrase'),
+        credentialSaveMode: isLocal
+            ? 'prompt'
+            : normalizeCredentialSaveMode(def.credentialSaveMode || existing?.credentialSaveMode),
         shell: stringField(def, existing, 'shell'),
         cwd: stringField(def, existing, 'cwd'),
         folderId: def.folderId === undefined ? existing?.folderId || null : def.folderId || null,
@@ -75,6 +81,14 @@ function normalizeSession(def = {}, existing = null) {
         description: def.description || existing?.description || '',
         createdAt: def.createdAt || existing?.createdAt || timestamp,
         updatedAt: timestamp
+    };
+}
+
+function publicSession(session = {}) {
+    return {
+        ...normalizeSession(session, session),
+        password: '',
+        passphrase: ''
     };
 }
 
@@ -156,7 +170,7 @@ class SessionApp {
 
     handleList() {
         try {
-            const list = this.store.get(STORE_KEY, []).map(session => normalizeSession(session, session));
+            const list = this.store.get(STORE_KEY, []).map(publicSession);
             return successResponse(list, '获取会话列表成功');
         } catch (err) {
             return errorResponse('获取会话列表失败: ' + err.message);
@@ -170,13 +184,13 @@ class SessionApp {
             if (!isLocalProtocol(protocol) && !def.host) return errorResponse('主机地址不能为空');
             if (protocol === 'ssh' && !def.username) return errorResponse('SSH 用户名不能为空');
             const list = this.store.get(STORE_KEY, []);
-            const existing = list.find(s => s.id === def.id);
+            const existing = list.find(s => s.id === def.id) || null;
             const session = normalizeSession(def, existing);
             const idx = list.findIndex(s => s.id === session.id);
             if (idx >= 0) list[idx] = session;
             else list.push(session);
             this.store.set(STORE_KEY, list);
-            return successResponse(session, '会话已保存');
+            return successResponse(publicSession(session), '会话已保存');
         } catch (err) {
             return errorResponse('保存会话失败: ' + err.message);
         }
@@ -184,7 +198,8 @@ class SessionApp {
 
     handleRemove(_event, id) {
         try {
-            const list = this.store.get(STORE_KEY, []).filter(s => s.id !== id);
+            const current = this.store.get(STORE_KEY, []);
+            const list = current.filter(s => s.id !== id);
             this.store.set(STORE_KEY, list);
             return successResponse(null, '会话已删除');
         } catch (err) {
@@ -234,7 +249,8 @@ class SessionApp {
                 });
             }
             const folders = currentFolders.filter(f => !removeIds.has(f.id));
-            const sessions = this.store.get(STORE_KEY, []).filter(session => !removeIds.has(session.folderId));
+            const currentSessions = this.store.get(STORE_KEY, []);
+            const sessions = currentSessions.filter(session => !removeIds.has(session.folderId));
             this.store.set(FOLDER_STORE_KEY, folders);
             this.store.set(STORE_KEY, sessions);
             return successResponse(null, '会话文件夹已删除');
@@ -254,7 +270,7 @@ class SessionApp {
 
             list[idx] = normalizeSession({ ...list[idx], folderId: payload.folderId || null }, list[idx]);
             this.store.set(STORE_KEY, list);
-            return successResponse(list[idx], '会话已移动');
+            return successResponse(publicSession(list[idx]), '会话已移动');
         } catch (err) {
             return errorResponse('移动会话失败: ' + err.message);
         }

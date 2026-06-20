@@ -1,6 +1,14 @@
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const { TERMINAL_STATUS, TERMINAL_EVT } = require('../const/telnetConst');
+const {
+    pauseLocalScriptTask,
+    resumeLocalScriptTask,
+    startLocalScriptTask,
+    stopLocalScriptTask
+} = require('./scriptProcessRunner');
+const { normalizeTerminalOutput } = require('./scriptIoBridge');
 
 let ptyModule;
 let ptyLoadError;
@@ -21,9 +29,28 @@ function normalizeText(value) {
     return String(value || '').trim();
 }
 
+function existingFile(filePath) {
+    try {
+        return filePath && fs.existsSync(filePath) ? filePath : '';
+    } catch (_err) {
+        return '';
+    }
+}
+
+function defaultWindowsShell() {
+    const override = normalizeText(process.env.NEXTERM_SHELL);
+    if (override) return override;
+
+    const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+    const windowsPowerShell = existingFile(
+        path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    );
+    return windowsPowerShell || process.env.ComSpec || 'powershell.exe';
+}
+
 function defaultShell() {
     if (process.platform === 'win32') {
-        return process.env.NEXTERM_SHELL || process.env.ComSpec || 'powershell.exe';
+        return defaultWindowsShell();
     }
     return process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
 }
@@ -116,6 +143,7 @@ class ShellManager {
     constructor(emit) {
         this.emit = typeof emit === 'function' ? emit : () => {};
         this.conns = new Map();
+        this.scriptTasks = new Map();
     }
 
     connect(options = {}) {
@@ -145,6 +173,9 @@ class ShellManager {
         this.conns.set(sessionId, ctx);
 
         term.onData(data => {
+            for (const task of this.scriptTasks.values()) {
+                if (task.sessionId === sessionId) task.bridge.onTerminalData(data);
+            }
             this.emit(TERMINAL_EVT.DATA, {
                 sessionId,
                 b64: Buffer.from(data, 'utf8').toString('base64')
@@ -182,9 +213,55 @@ class ShellManager {
         ctx.term.write(String(data));
     }
 
+    emitData(sessionId, data) {
+        if (!data || data.length === 0) return;
+        this.emit(TERMINAL_EVT.DATA, {
+            sessionId,
+            b64: Buffer.from(normalizeTerminalOutput(data)).toString('base64')
+        });
+    }
+
+    async runScript(sessionId, payload = {}) {
+        const ctx = this.conns.get(sessionId);
+        if (!ctx) return { ok: false, msg: '本地会话不存在' };
+        if (!payload.taskId) return { ok: false, msg: '脚本任务参数不完整' };
+        if (this.scriptTasks.has(payload.taskId)) return { ok: false, msg: '脚本任务已存在' };
+
+        return startLocalScriptTask({
+            sessionId,
+            writeTerminal: data => this.emitData(sessionId, data),
+            sendTerminalInput: data => this.sendInput(sessionId, data),
+            payload,
+            cwd: ctx.cwd,
+            emit: this.emit,
+            registerTask: task => this.scriptTasks.set(payload.taskId, task),
+            unregisterTask: () => this.scriptTasks.delete(payload.taskId)
+        });
+    }
+
+    stopScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return stopLocalScriptTask(task);
+    }
+
+    pauseScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return pauseLocalScriptTask(task);
+    }
+
+    resumeScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return resumeLocalScriptTask(task);
+    }
+
     disconnect(sessionId) {
         const ctx = this.conns.get(sessionId);
         if (!ctx) return;
+        for (const [taskId, task] of [...this.scriptTasks.entries()]) {
+            if (task.sessionId !== sessionId) continue;
+            this.stopScript(taskId);
+            this.scriptTasks.delete(taskId);
+        }
         try {
             ctx.term.kill();
         } catch (_err) {

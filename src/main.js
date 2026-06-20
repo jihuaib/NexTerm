@@ -5,11 +5,12 @@ import './styles/forms.css';
 import '@xterm/xterm/css/xterm.css';
 import { ensureRuntimeApis } from './runtimeApis';
 import { initEventBridge } from './utils/eventBus';
-import { loadSettings, loadSessionFolders, loadSessions } from './store';
+import { initScriptTaskEvents, loadScripts, loadSettings, loadSessionFolders, loadSessions } from './store';
 
 ensureRuntimeApis();
 initEventBridge();
+initScriptTaskEvents();
 
-Promise.all([loadSettings(), loadSessionFolders(), loadSessions()]).finally(() => {
+Promise.all([loadSettings(), loadSessionFolders(), loadSessions(), loadScripts()]).finally(() => {
     createApp(App).mount('#app');
 });

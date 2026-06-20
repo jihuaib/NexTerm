@@ -53,7 +53,7 @@
         </div>
         <BaseDialog
             v-if="authPromptVisible"
-            title="SSH 密码"
+            :title="authPromptTitle"
             :subtitle="authPromptSubtitle"
             width="360px"
             :z-index="130"
@@ -61,7 +61,7 @@
         >
             <div class="auth-form">
                 <label class="auth-field" :class="{ 'is-invalid': authError }">
-                    <span>密码</span>
+                    <span>{{ authPromptLabel }}</span>
                     <input
                         ref="authPasswordInput"
                         v-model="authPassword"
@@ -121,6 +121,7 @@
         () => ['closed', 'error'].includes(currentStatus.value) && !authPromptVisible.value
     );
     const authPromptVisible = ref(false);
+    const authPromptKind = ref('password');
     const authPassword = ref('');
     const authError = ref('');
     const authSubmitting = ref(false);
@@ -134,6 +135,8 @@
         const user = props.session.username ? `${props.session.username}@` : '';
         return `${user}${props.session.host}:${props.session.port || 22}`;
     });
+    const authPromptTitle = computed(() => (authPromptKind.value === 'passphrase' ? 'SSH 私钥口令' : 'SSH 密码'));
+    const authPromptLabel = computed(() => (authPromptKind.value === 'passphrase' ? '私钥口令' : '密码'));
     const searchCountLabel = computed(() => {
         if (!searchTerm.value) return '';
         const count = Number(searchResult.value.resultCount) || 0;
@@ -167,11 +170,14 @@
                 clearAutoReconnect();
                 autoReconnectAttempts = 0;
                 props.session.reconnectAttempts = 0;
+                clearPromptModeSecrets();
             }
-            if (shouldRetryPassword(status, msg)) {
+            const retryKind = retrySecretKind(status, msg);
+            if (retryKind) {
                 props.session.connectionStarted = false;
-                props.session.password = '';
-                openAuthPrompt(msg);
+                if (retryKind === 'password') props.session.password = '';
+                if (retryKind === 'passphrase') props.session.passphrase = '';
+                openAuthPrompt(msg, retryKind);
                 return;
             }
             scheduleAutoReconnect(status, msg);
@@ -277,12 +283,28 @@
         }, 160);
     }
 
-    function needsPasswordPrompt() {
+    function needsInitialSecretPrompt() {
         return isPasswordAuthSession() && !String(props.session.password || '');
     }
 
-    function shouldRetryPassword(status, msg = '') {
-        return status === 'error' && isPasswordAuthSession() && /SSH 认证失败/.test(String(msg || ''));
+    function retrySecretKind(status, msg = '') {
+        if (status !== 'error') return '';
+        const text = String(msg || '');
+        if (isPasswordAuthSession() && /SSH 认证失败|密码为空/i.test(text)) return 'password';
+        if (
+            isSshSessionProtocol(props.session.protocol) &&
+            (props.session.authType || 'password') === 'key' &&
+            /passphrase|口令|私钥|private key|encrypted|decrypt/i.test(text)
+        ) {
+            return 'passphrase';
+        }
+        return '';
+    }
+
+    function clearPromptModeSecrets() {
+        if (props.session.credentialSaveMode !== 'prompt') return;
+        props.session.password = '';
+        props.session.passphrase = '';
     }
 
     function isRemoteSession() {
@@ -326,19 +348,20 @@
     }
 
     async function startConnectFlow() {
-        if (needsPasswordPrompt()) {
-            openAuthPrompt();
+        if (needsInitialSecretPrompt()) {
+            openAuthPrompt('', 'password');
             return;
         }
         await connectTerminal();
     }
 
-    function openAuthPrompt(message = '') {
+    function openAuthPrompt(message = '', kind = 'password') {
         authSubmitting.value = false;
+        authPromptKind.value = kind;
         authPassword.value = '';
-        authError.value = message && /SSH 认证失败/.test(message) ? message : '';
+        authError.value = message || '';
         authPromptVisible.value = true;
-        showStatus('info', '请输入 SSH 密码');
+        showStatus('info', kind === 'passphrase' ? '请输入 SSH 私钥口令' : '请输入 SSH 密码');
         nextTick(() => authPasswordInput.value?.focus?.());
     }
 
@@ -348,19 +371,20 @@
         authPassword.value = '';
         authError.value = '';
         setSessionStatus(props.session.sessionId, 'closed');
-        showStatus('closed', '已取消 SSH 密码输入');
+        showStatus('closed', authPromptKind.value === 'passphrase' ? '已取消 SSH 私钥口令输入' : '已取消 SSH 密码输入');
     }
 
     async function submitAuthPrompt() {
         if (authSubmitting.value) return;
         if (!authPassword.value) {
-            authError.value = '请输入 SSH 密码';
+            authError.value = authPromptKind.value === 'passphrase' ? '请输入 SSH 私钥口令' : '请输入 SSH 密码';
             nextTick(() => authPasswordInput.value?.focus?.());
             return;
         }
 
         authSubmitting.value = true;
-        props.session.password = authPassword.value;
+        if (authPromptKind.value === 'passphrase') props.session.passphrase = authPassword.value;
+        else props.session.password = authPassword.value;
         authPromptVisible.value = false;
         await connectTerminal();
         authSubmitting.value = false;
@@ -372,7 +396,7 @@
         props.session.connectionStarted = true;
         showStatus('connecting');
         const size = getTerminalViewSize(view);
-        const res = await window.terminalApi.connect({
+        const payload = {
             sessionId: props.session.sessionId,
             name: props.session.name,
             protocol: props.session.protocol,
@@ -380,6 +404,8 @@
             port: props.session.port,
             username: props.session.username,
             authType: props.session.authType,
+            profileId: props.session.profileId,
+            credentialSaveMode: props.session.credentialSaveMode,
             password: props.session.password,
             privateKeyPath: props.session.privateKeyPath,
             passphrase: props.session.passphrase,
@@ -388,12 +414,43 @@
             cwd: props.session.cwd,
             cols: size.cols,
             rows: size.rows
-        });
+        };
+        let res;
+        try {
+            res = await connectWithTimeout(payload);
+        } catch (err) {
+            res = { status: 'error', msg: err?.message || String(err) };
+        }
         if (res.status === 'error') {
             setSessionStatus(props.session.sessionId, 'error');
             showStatus('error', res.msg);
-            if (needsPasswordPrompt()) props.session.connectionStarted = false;
+            const retryKind = retrySecretKind('error', res.msg);
+            if (retryKind) {
+                props.session.connectionStarted = false;
+                if (retryKind === 'password') props.session.password = '';
+                if (retryKind === 'passphrase') props.session.passphrase = '';
+                openAuthPrompt(res.msg, retryKind);
+                return;
+            }
+            if (needsInitialSecretPrompt()) props.session.connectionStarted = false;
         }
+    }
+
+    function connectWithTimeout(payload) {
+        const isLocal = isLocalSessionProtocol(payload.protocol);
+        const timeoutMs = isLocal ? 12_000 : 20_000;
+        const timeoutMsg = isLocal
+            ? '本地 Shell 启动超时，请检查 node-pty 是否已按当前 Electron 版本重编，或尝试设置 NEXTERM_PTY_BACKEND=winpty 后重启。'
+            : '连接请求超时，请稍后重试。';
+        let timer = null;
+        return Promise.race([
+            window.terminalApi.connect(payload),
+            new Promise((_, reject) => {
+                timer = window.setTimeout(() => reject(new Error(timeoutMsg)), timeoutMs);
+            })
+        ]).finally(() => {
+            if (timer) window.clearTimeout(timer);
+        });
     }
 
     async function reconnectTerminal(options = {}) {

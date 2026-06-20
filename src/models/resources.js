@@ -31,6 +31,11 @@ export function defaultPortForProtocol(protocol, fallback = 23) {
     return Number(fallback) || 23;
 }
 
+export function normalizeCredentialSaveMode(value) {
+    if (value === 'session' || value === 'prompt') return value;
+    return 'prompt';
+}
+
 export function makeEntityId(prefix = 'id') {
     return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -65,6 +70,7 @@ export function normalizeSessionProfile(session = {}, defaults = {}) {
         port: isLocal ? null : Number(session.port) || port,
         username: session.username || '',
         authType: session.authType || (session.privateKeyPath ? 'key' : 'password'),
+        credentialSaveMode: isLocal ? 'prompt' : normalizeCredentialSaveMode(session.credentialSaveMode),
         password: session.password || '',
         privateKeyPath: session.privateKeyPath || '',
         passphrase: session.passphrase || '',

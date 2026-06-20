@@ -27,6 +27,7 @@
     .icon-button {
         display: grid;
         place-items: center;
+        padding: 0;
         border: 1px solid var(--nx-border);
         border-radius: 7px;
         background: var(--nx-surface-2);

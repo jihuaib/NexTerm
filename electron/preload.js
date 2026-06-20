@@ -11,10 +11,22 @@ contextBridge.exposeInMainWorld('sessionApi', {
     moveToFolder: (sessionId, folderId) => ipcRenderer.invoke('session:move-folder', { sessionId, folderId })
 });
 
+contextBridge.exposeInMainWorld('scriptApi', {
+    list: () => ipcRenderer.invoke('script:list'),
+    save: script => ipcRenderer.invoke('script:save', script),
+    remove: id => ipcRenderer.invoke('script:remove', id),
+    importScripts: () => ipcRenderer.invoke('script:import'),
+    exportScripts: ids => ipcRenderer.invoke('script:export', { ids })
+});
+
 // 终端 / 连接
 contextBridge.exposeInMainWorld('terminalApi', {
     connect: options => ipcRenderer.invoke('terminal:connect', options),
     disconnect: sessionId => ipcRenderer.invoke('terminal:disconnect', sessionId),
+    runScript: payload => ipcRenderer.invoke('terminal:script-run', payload),
+    stopScript: payload => ipcRenderer.invoke('terminal:script-stop', payload),
+    pauseScript: payload => ipcRenderer.invoke('terminal:script-pause', payload),
+    resumeScript: payload => ipcRenderer.invoke('terminal:script-resume', payload),
     // 键盘输入用 send，fire-and-forget，避免每键一次 Promise 往返
     sendInput: (sessionId, data) => ipcRenderer.send('terminal:input', { sessionId, data }),
     resize: (sessionId, cols, rows) => ipcRenderer.send('terminal:resize', { sessionId, cols, rows }),
@@ -46,6 +58,16 @@ contextBridge.exposeInMainWorld('updaterApi', {
     downloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
     quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
     getCurrentVersion: () => ipcRenderer.invoke('updater:getCurrentVersion')
+});
+
+contextBridge.exposeInMainWorld('knownHostsApi', {
+    list: () => ipcRenderer.invoke('known-hosts:list'),
+    remove: payload => ipcRenderer.invoke('known-hosts:remove', payload)
+});
+
+contextBridge.exposeInMainWorld('keychainApi', {
+    list: () => ipcRenderer.invoke('keychain:list'),
+    remove: payload => ipcRenderer.invoke('keychain:remove', payload)
 });
 
 contextBridge.exposeInMainWorld('clipboardApi', {

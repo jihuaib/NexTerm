@@ -16,6 +16,10 @@ function sessionDataPath() {
     return userDataPath('data', 'sessions.json');
 }
 
+function scriptDataPath() {
+    return userDataPath('data', 'scripts.json');
+}
+
 function terminalLogDirectory() {
     return ensureUserDataDir('logs');
 }
@@ -30,6 +34,7 @@ function sftpUploadDirectory() {
 
 module.exports = {
     ensureUserDataDir,
+    scriptDataPath,
     sessionDataPath,
     sftpDownloadDirectory,
     sftpUploadDirectory,

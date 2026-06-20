@@ -1,5 +1,12 @@
 const net = require('net');
 const { TELNET, TERMINAL_STATUS, TERMINAL_EVT } = require('../const/telnetConst');
+const {
+    pauseLocalScriptTask,
+    resumeLocalScriptTask,
+    startLocalScriptTask,
+    stopLocalScriptTask
+} = require('./scriptProcessRunner');
+const { normalizeTerminalOutput } = require('./scriptIoBridge');
 
 const T = TELNET;
 
@@ -16,6 +23,7 @@ class TelnetManager {
     constructor(emit) {
         this.emit = typeof emit === 'function' ? emit : () => {};
         this.conns = new Map(); // sessionId -> ctx
+        this.scriptTasks = new Map();
     }
 
     connect({ sessionId, host, port }) {
@@ -100,7 +108,11 @@ class TelnetManager {
             }
         }
         if (out.length) {
-            this.emit(TERMINAL_EVT.DATA, { sessionId, b64: Buffer.from(out).toString('base64') });
+            const data = Buffer.from(out);
+            for (const task of this.scriptTasks.values()) {
+                if (task.sessionId === sessionId) task.bridge.onTerminalData(data);
+            }
+            this.emit(TERMINAL_EVT.DATA, { sessionId, b64: data.toString('base64') });
         }
     }
 
@@ -177,9 +189,54 @@ class TelnetManager {
         ctx.socket.write(Buffer.from(escaped));
     }
 
+    emitData(sessionId, data) {
+        if (!data || data.length === 0) return;
+        this.emit(TERMINAL_EVT.DATA, {
+            sessionId,
+            b64: Buffer.from(normalizeTerminalOutput(data)).toString('base64')
+        });
+    }
+
+    runScript(sessionId, payload = {}) {
+        const ctx = this.conns.get(sessionId);
+        if (!ctx?.socket) return Promise.resolve({ ok: false, msg: 'Telnet 会话不存在' });
+        if (!payload.taskId) return Promise.resolve({ ok: false, msg: '脚本任务参数不完整' });
+        if (this.scriptTasks.has(payload.taskId)) return Promise.resolve({ ok: false, msg: '脚本任务已存在' });
+
+        return startLocalScriptTask({
+            sessionId,
+            writeTerminal: data => this.emitData(sessionId, data),
+            sendTerminalInput: data => this.sendInput(sessionId, data),
+            payload,
+            emit: this.emit,
+            registerTask: task => this.scriptTasks.set(payload.taskId, task),
+            unregisterTask: () => this.scriptTasks.delete(payload.taskId)
+        });
+    }
+
+    stopScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return stopLocalScriptTask(task);
+    }
+
+    pauseScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return pauseLocalScriptTask(task);
+    }
+
+    resumeScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return resumeLocalScriptTask(task);
+    }
+
     disconnect(sessionId) {
         const ctx = this.conns.get(sessionId);
         if (!ctx) return;
+        for (const [taskId, task] of [...this.scriptTasks.entries()]) {
+            if (task.sessionId !== sessionId) continue;
+            this.stopScript(taskId);
+            this.scriptTasks.delete(taskId);
+        }
         ctx.socket.destroy();
         this.conns.delete(sessionId);
     }

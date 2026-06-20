@@ -155,6 +155,8 @@
                     />
                 </div>
             </div>
+
+            <p class="security-note">已信任主机记录可在主页面 Known Host 中管理。</p>
         </section>
     </div>
 </template>
@@ -180,3 +182,12 @@
         return Math.min(20, Math.max(1, Number(v) || 5));
     }
 </script>
+
+<style scoped>
+    .security-note {
+        margin: 0;
+        padding: 0 0 12px;
+        color: var(--nx-text-dim);
+        font-size: 11px;
+    }
+</style>

@@ -2,6 +2,7 @@ const Store = require('electron-store');
 const EventDispatcher = require('../utils/eventDispatcher');
 const SessionApp = require('./sessionApp');
 const SettingsApp = require('./settingsApp');
+const ScriptApp = require('./scriptApp');
 const SftpApp = require('./sftpApp');
 const TelnetApp = require('./telnetApp');
 const UpdaterApp = require('./updaterApp');
@@ -16,6 +17,7 @@ class SystemApp {
         this.dispatcher = new EventDispatcher();
 
         this.sessionApp = new SessionApp(ipcMain);
+        this.scriptApp = new ScriptApp(ipcMain);
         this.updaterApp = new UpdaterApp(ipcMain, this.dispatcher, this.store);
         this.settingsApp = new SettingsApp(ipcMain, this.store, settings => this.updaterApp.updateSettings(settings));
         this.telnetApp = new TelnetApp(ipcMain, this.dispatcher, this.store);

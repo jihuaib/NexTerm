@@ -4,6 +4,13 @@ const remotePath = require('path').posix;
 const { Client } = require('ssh2');
 const { TERMINAL_STATUS, TERMINAL_EVT, SFTP_EVT } = require('../const/telnetConst');
 const { verifyKnownHost } = require('./knownHosts');
+const {
+    pauseLocalScriptTask,
+    resumeLocalScriptTask,
+    startLocalScriptTask,
+    stopLocalScriptTask
+} = require('./scriptProcessRunner');
+const { normalizeTerminalOutput } = require('./scriptIoBridge');
 
 function normalizeText(value) {
     return String(value || '').trim();
@@ -48,23 +55,35 @@ function stripAnsi(text) {
 function resolvePromptPath(ctx, promptPath) {
     const raw = String(promptPath || '').trim();
     if (!raw) return '';
-    if (raw === '~') return ctx.home || '/';
-    if (raw.startsWith('~/')) return normalizeRemotePath(remotePath.join(ctx.home || '/', raw.slice(2)));
+    if (raw === '~') return ctx.home || '';
+    if (raw.startsWith('~/')) return ctx.home ? normalizeRemotePath(remotePath.join(ctx.home, raw.slice(2))) : '';
     if (raw.startsWith('/')) return normalizeRemotePath(raw);
     return '';
 }
 
-function extractLatestPromptPath(text, ctx) {
+function extractLatestPromptRawPath(text) {
     let latestPath = '';
     const plain = stripAnsi(text).replace(/\r/g, '\n');
     const pattern = /(?:^|\n)[^\n]*:([~/][^#$\n]*)\s?[$#]\s?/g;
     let match = pattern.exec(plain);
     while (match) {
-        const resolved = resolvePromptPath(ctx, match[1]);
-        if (resolved) latestPath = resolved;
+        latestPath = String(match[1] || '').trim();
         match = pattern.exec(plain);
     }
     return latestPath;
+}
+
+function inferHomeFromPromptPath(rawPromptPath, cwdPath) {
+    const raw = String(rawPromptPath || '').trim();
+    if (!raw.startsWith('~')) return '';
+    const cwd = normalizeRemotePath(cwdPath);
+    if (raw === '~') return cwd;
+
+    const suffix = normalizeRemotePath(`/${raw.slice(2)}`);
+    if (!suffix || suffix === '/') return cwd;
+    if (cwd === suffix) return '/';
+    if (!cwd.endsWith(suffix)) return '';
+    return normalizeRemotePath(cwd.slice(0, -suffix.length) || '/');
 }
 
 function normalizeAuthType(options = {}) {
@@ -142,9 +161,8 @@ function buildConfig(options = {}) {
     }
 
     if (options.sshKnownHostsEnabled !== false) {
-        config.hostHash = 'sha256';
-        config.hostVerifier = fingerprint => {
-            const result = verifyKnownHost(config, fingerprint);
+        config.hostVerifier = key => {
+            const result = verifyKnownHost(config, key);
             if (!result.ok) options._knownHostVerificationError = result.msg;
             return result.ok;
         };
@@ -307,6 +325,7 @@ class SshManager {
     constructor(emit) {
         this.emit = typeof emit === 'function' ? emit : () => {};
         this.conns = new Map();
+        this.scriptTasks = new Map();
     }
 
     connect(options = {}) {
@@ -331,7 +350,7 @@ class SshManager {
             cols: Number(options.cols) || 80,
             rows: Number(options.rows) || 24,
             cwd: '/',
-            home: '/',
+            home: '',
             previousCwd: '/',
             dirStack: [],
             commandBuffer: '',
@@ -361,7 +380,7 @@ class SshManager {
                     sftp.realpath('.', (err, realPath) => {
                         if (!err && realPath) {
                             ctx.cwd = normalizeRemotePath(realPath);
-                            ctx.home = ctx.cwd;
+                            if (!ctx.home && ctx.cwd !== '/') ctx.home = ctx.cwd;
                             this.emit(SFTP_EVT.CWD, { sessionId, path: ctx.cwd });
                         }
                     });
@@ -391,6 +410,9 @@ class SshManager {
                     this.emit(TERMINAL_EVT.STATUS, { sessionId, status: TERMINAL_STATUS.CONNECTED });
                     stream.on('data', data => {
                         this.processShellData(sessionId, ctx, data);
+                        for (const task of this.scriptTasks.values()) {
+                            if (task.sessionId === sessionId) task.bridge.onTerminalData(data);
+                        }
                         this.emit(TERMINAL_EVT.DATA, { sessionId, b64: toB64(data) });
                     });
                     stream.stderr?.on?.('data', data => {
@@ -450,7 +472,7 @@ class SshManager {
         });
         if (realPath) {
             ctx.cwd = normalizeRemotePath(realPath);
-            ctx.home = ctx.home && ctx.home !== '/' ? ctx.home : ctx.cwd;
+            if (!ctx.home && ctx.cwd !== '/') ctx.home = ctx.cwd;
             this.emit(SFTP_EVT.CWD, { sessionId, path: ctx.cwd });
         }
         return { path: ctx.cwd || '/' };
@@ -679,8 +701,16 @@ class SshManager {
         const text = ctx.oscBuffer + chunk;
         const paths = extractOsc7Paths(text);
         paths.forEach(path => this.updateCwd(sessionId, ctx, path, true));
+
         const promptText = ctx.promptBuffer + chunk;
-        const promptPath = extractLatestPromptPath(promptText, ctx);
+        const rawPromptPath = extractLatestPromptRawPath(promptText);
+        const latestOscPath = paths[paths.length - 1] || '';
+        if (latestOscPath) {
+            const inferredHome = inferHomeFromPromptPath(rawPromptPath, latestOscPath);
+            if (inferredHome && (!ctx.home || rawPromptPath.startsWith('~'))) ctx.home = inferredHome;
+        }
+
+        const promptPath = resolvePromptPath(ctx, rawPromptPath);
         if (promptPath) this.updateCwd(sessionId, ctx, promptPath, true);
         ctx.promptBuffer = promptText.slice(-2048);
 
@@ -741,9 +771,54 @@ class SshManager {
         }
     }
 
+    emitData(sessionId, data) {
+        if (!data || data.length === 0) return;
+        this.emit(TERMINAL_EVT.DATA, {
+            sessionId,
+            b64: toB64(normalizeTerminalOutput(data))
+        });
+    }
+
+    runScript(sessionId, payload = {}) {
+        const ctx = this.conns.get(sessionId);
+        if (!ctx?.conn) return Promise.resolve({ ok: false, msg: 'SSH 会话不存在' });
+        if (!payload.taskId) return Promise.resolve({ ok: false, msg: '脚本任务参数不完整' });
+        if (this.scriptTasks.has(payload.taskId)) return Promise.resolve({ ok: false, msg: '脚本任务已存在' });
+
+        return startLocalScriptTask({
+            sessionId,
+            writeTerminal: data => this.emitData(sessionId, data),
+            sendTerminalInput: data => this.sendInput(sessionId, data),
+            payload,
+            emit: this.emit,
+            registerTask: task => this.scriptTasks.set(payload.taskId, task),
+            unregisterTask: () => this.scriptTasks.delete(payload.taskId)
+        });
+    }
+
+    stopScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return stopLocalScriptTask(task);
+    }
+
+    pauseScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return pauseLocalScriptTask(task);
+    }
+
+    resumeScript(taskId) {
+        const task = this.scriptTasks.get(taskId);
+        return resumeLocalScriptTask(task);
+    }
+
     disconnect(sessionId) {
         const ctx = this.conns.get(sessionId);
         if (!ctx) return;
+        for (const [taskId, task] of [...this.scriptTasks.entries()]) {
+            if (task.sessionId !== sessionId) continue;
+            this.stopScript(taskId);
+            this.scriptTasks.delete(taskId);
+        }
         try {
             ctx.stream?.end?.();
             ctx.conn.end();

@@ -3,10 +3,21 @@ import TerminalSection from '../components/settings/TerminalSection.vue';
 import ConnectionSection from '../components/settings/ConnectionSection.vue';
 import FilesSection from '../components/settings/FilesSection.vue';
 import LogsSection from '../components/settings/LogsSection.vue';
+import ScriptsSection from '../components/settings/ScriptsSection.vue';
 import ShortcutsSection from '../components/settings/ShortcutsSection.vue';
 import UpdateSection from '../components/settings/UpdateSection.vue';
 import AboutSection from '../components/settings/AboutSection.vue';
-import { FileText, FolderOpen, Info, Keyboard, Network, Palette, RefreshCw, SquareTerminal } from '@lucide/vue';
+import {
+    FileCode,
+    FileText,
+    FolderOpen,
+    Info,
+    Keyboard,
+    Network,
+    Palette,
+    RefreshCw,
+    SquareTerminal
+} from '@lucide/vue';
 
 // 设置分类注册表：新增一类 = 写一个 section 组件 + 在此加一行
 export const SETTINGS_CATEGORIES = [
@@ -15,6 +26,7 @@ export const SETTINGS_CATEGORIES = [
     { id: 'shortcuts', label: '快捷键', desc: '终端复制、粘贴与右键操作', icon: Keyboard, component: ShortcutsSection },
     { id: 'connection', label: '连接', desc: '默认值、重连与 SSH 安全', icon: Network, component: ConnectionSection },
     { id: 'files', label: '文件', desc: 'SFTP 文件面板与远程目录行为', icon: FolderOpen, component: FilesSection },
+    { id: 'scripts', label: '脚本', desc: 'term API 与执行语法', icon: FileCode, component: ScriptsSection },
     { id: 'logs', label: '日志', desc: '终端缓冲区日志写入与格式', icon: FileText, component: LogsSection },
     { id: 'update', label: '更新', desc: '版本检查、下载与安装', icon: RefreshCw, component: UpdateSection },
     { id: 'about', label: '关于', desc: '版本与后续能力规划', icon: Info, component: AboutSection }

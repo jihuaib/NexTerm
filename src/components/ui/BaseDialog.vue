@@ -1,5 +1,5 @@
 <template>
-    <div class="dialog-overlay" :style="{ zIndex }" @click.self="$emit('close')">
+    <div class="dialog-overlay" :style="{ zIndex }">
         <section
             ref="dialogRef"
             class="dialog"
@@ -100,6 +100,14 @@
     .dialog__body {
         min-width: 0;
         overflow: hidden;
+        user-select: text;
+    }
+    .dialog__body :deep(*) {
+        user-select: text;
+    }
+    .dialog__body :deep(button),
+    .dialog__footer :deep(button) {
+        user-select: none;
     }
     .dialog__footer {
         display: flex;

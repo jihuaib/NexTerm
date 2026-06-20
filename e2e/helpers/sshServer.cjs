@@ -239,11 +239,11 @@ function wireShell(stream) {
     });
 }
 
-async function startTestSshServer() {
+async function startTestSshServer(options = {}) {
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const hostKey = privateKey.export({ type: 'pkcs1', format: 'pem' });
     const username = 'e2e';
-    const password = 'password';
+    const password = options.password || 'password';
     const clients = new Set();
 
     const server = new Server({ hostKeys: [hostKey] }, client => {

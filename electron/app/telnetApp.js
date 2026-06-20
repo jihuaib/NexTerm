@@ -32,6 +32,10 @@ class TelnetApp {
 
         ipcMain.handle('terminal:connect', this.handleConnect.bind(this));
         ipcMain.handle('terminal:disconnect', this.handleDisconnect.bind(this));
+        ipcMain.handle('terminal:script-run', this.handleScriptRun.bind(this));
+        ipcMain.handle('terminal:script-stop', this.handleScriptStop.bind(this));
+        ipcMain.handle('terminal:script-pause', this.handleScriptPause.bind(this));
+        ipcMain.handle('terminal:script-resume', this.handleScriptResume.bind(this));
         ipcMain.on('terminal:input', this.handleInput.bind(this));
         ipcMain.on('terminal:resize', this.handleResize.bind(this));
     }
@@ -55,9 +59,10 @@ class TelnetApp {
             if (protocol === 'telnet' && !options.host) return errorResponse('连接参数不完整');
             if (protocol === 'ssh' && !options.host) return errorResponse('SSH 主机不能为空');
 
-            const result = this.getManager(protocol).connect(options);
+            const connectOptions = { ...options };
+            const result = this.getManager(protocol).connect(connectOptions);
             if (!result.ok) return errorResponse(result.msg || '连接失败');
-            this.terminalLogWriter.registerSession(options, protocol);
+            this.terminalLogWriter.registerSession(connectOptions, protocol);
             this.routes.set(options.sessionId, protocol);
             return successResponse(null, '正在连接');
         } catch (err) {
@@ -90,6 +95,55 @@ class TelnetApp {
     handleResize(_event, { sessionId, cols, rows } = {}) {
         const protocol = this.routes.get(sessionId);
         if (protocol) this.getManager(protocol).resize(sessionId, cols, rows);
+    }
+
+    async handleScriptRun(_event, payload = {}) {
+        try {
+            const { sessionId } = payload;
+            const protocol = this.routes.get(sessionId);
+            if (!protocol) return errorResponse('请选择已连接的终端窗口');
+            const result = await this.getManager(protocol).runScript(sessionId, payload);
+            if (!result.ok) return errorResponse(result.msg || '脚本执行失败');
+            return successResponse(null, '脚本已开始执行');
+        } catch (err) {
+            return errorResponse('脚本执行失败: ' + err.message);
+        }
+    }
+
+    handleScriptStop(_event, payload = {}) {
+        try {
+            const protocol = this.routes.get(payload.sessionId);
+            if (!protocol) return errorResponse('脚本任务不存在');
+            const result = this.getManager(protocol).stopScript(payload.taskId);
+            if (!result.ok) return errorResponse(result.msg || '停止脚本失败');
+            return successResponse(null, '脚本已停止');
+        } catch (err) {
+            return errorResponse('停止脚本失败: ' + err.message);
+        }
+    }
+
+    handleScriptPause(_event, payload = {}) {
+        try {
+            const protocol = this.routes.get(payload.sessionId);
+            if (!protocol) return errorResponse('脚本任务不存在');
+            const result = this.getManager(protocol).pauseScript(payload.taskId);
+            if (!result.ok) return errorResponse(result.msg || '暂停脚本失败');
+            return successResponse(null, '脚本已暂停');
+        } catch (err) {
+            return errorResponse('暂停脚本失败: ' + err.message);
+        }
+    }
+
+    handleScriptResume(_event, payload = {}) {
+        try {
+            const protocol = this.routes.get(payload.sessionId);
+            if (!protocol) return errorResponse('脚本任务不存在');
+            const result = this.getManager(protocol).resumeScript(payload.taskId);
+            if (!result.ok) return errorResponse(result.msg || '继续脚本失败');
+            return successResponse(null, '脚本已继续');
+        } catch (err) {
+            return errorResponse('继续脚本失败: ' + err.message);
+        }
     }
 
     cleanup() {

@@ -1,6 +1,8 @@
 const { BrowserWindow, dialog } = require('electron');
 const { successResponse, errorResponse } = require('../utils/responseUtils');
 const { terminalLogDirectory } = require('../utils/appPaths');
+const { listKnownHosts, removeKnownHost } = require('../utils/knownHosts');
+const { listSshKeys, removeSshKey, sshDirPath } = require('../utils/sshKeyFiles');
 
 const STORE_KEY = 'settings';
 const STATIC_DEFAULTS = {
@@ -60,6 +62,10 @@ class SettingsApp {
         ipcMain.handle('settings:get', this.handleGet.bind(this));
         ipcMain.handle('settings:save', this.handleSave.bind(this));
         ipcMain.handle('settings:select-log-directory', this.handleSelectLogDirectory.bind(this));
+        ipcMain.handle('known-hosts:list', this.handleKnownHostsList.bind(this));
+        ipcMain.handle('known-hosts:remove', this.handleKnownHostsRemove.bind(this));
+        ipcMain.handle('keychain:list', this.handleKeychainList.bind(this));
+        ipcMain.handle('keychain:remove', this.handleKeychainRemove.bind(this));
     }
 
     handleGet() {
@@ -100,6 +106,47 @@ class SettingsApp {
             return successResponse({ canceled: false, path: result.filePaths[0] }, '已选择日志目录');
         } catch (err) {
             return errorResponse('选择日志目录失败: ' + err.message);
+        }
+    }
+
+    handleKnownHostsList() {
+        try {
+            return successResponse(listKnownHosts(), '获取 known_hosts 成功');
+        } catch (err) {
+            return errorResponse('获取 known_hosts 失败: ' + err.message);
+        }
+    }
+
+    handleKnownHostsRemove(_event, payload = {}) {
+        try {
+            const removed = removeKnownHost(payload);
+            return successResponse({ removed }, removed ? '主机指纹记录已删除' : '主机指纹记录不存在');
+        } catch (err) {
+            return errorResponse('删除主机指纹记录失败: ' + err.message);
+        }
+    }
+
+    handleKeychainList() {
+        try {
+            return successResponse(
+                {
+                    available: true,
+                    sourcePath: sshDirPath(),
+                    entries: listSshKeys()
+                },
+                '获取 SSH Key 成功'
+            );
+        } catch (err) {
+            return errorResponse('获取 SSH Key 失败: ' + err.message);
+        }
+    }
+
+    handleKeychainRemove(_event, payload = {}) {
+        try {
+            const removed = removeSshKey(payload);
+            return successResponse({ removed }, removed ? 'SSH Key 已删除' : 'SSH Key 不存在');
+        } catch (err) {
+            return errorResponse('删除 SSH Key 失败: ' + err.message);
         }
     }
 }

@@ -1,4 +1,5 @@
 const { test, expect, _electron: electron } = require('@playwright/test');
+const { generateKeyPairSync } = require('crypto');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
@@ -18,6 +19,16 @@ async function pathExists(target) {
     } catch (_err) {
         return false;
     }
+}
+
+async function writeTestPrivateKey(homeDir) {
+    const sshDir = path.join(homeDir, '.ssh');
+    await fs.mkdir(sshDir, { recursive: true });
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const privateKeyText = privateKey.export({ type: 'pkcs8', format: 'pem' });
+    const keyPath = path.join(sshDir, 'id_ed25519');
+    await fs.writeFile(keyPath, privateKeyText, { mode: 0o600 });
+    return keyPath;
 }
 
 async function closeElectronApp(electronApp) {
@@ -59,7 +70,9 @@ test.beforeEach(async ({}, testInfo) => {
             NODE_ENV: 'test',
             NEXTERM_E2E: '1',
             NEXTERM_DISABLE_DEVTOOLS: '1',
-            NEXTERM_USER_DATA_DIR: userDataDir
+            NEXTERM_USER_DATA_DIR: userDataDir,
+            HOME: userDataDir,
+            USERPROFILE: userDataDir
         }
     });
     const page = await electronApp.firstWindow();
@@ -140,8 +153,11 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     expect(await electronApp.evaluate(({ app }) => app.getPath('userData'))).toBe(userDataDir);
 
     await openSettings(page);
+    await page.locator('.overlay').click({ position: { x: 4, y: 4 } });
+    await expect(settingsPanel(page)).toBeVisible();
+    await expect(settingsPanel(page).locator('.content__body')).toHaveCSS('user-select', 'text');
 
-    for (const category of ['外观', '终端', '快捷键', '连接', '文件', '日志', '更新', '关于']) {
+    for (const category of ['外观', '终端', '快捷键', '连接', '文件', '脚本', '日志', '更新', '关于']) {
         await expect(settingsCategory(page, category)).toBeVisible();
     }
 
@@ -239,6 +255,9 @@ test('session dialog validates protocol-specific fields in place', async ({}, te
     await page.getByRole('button', { name: '新建会话' }).click();
     const sessionDialog = page.locator('.dialog').filter({ hasText: '新建会话' });
     await expect(sessionDialog).toBeVisible();
+    await page.locator('.dialog-overlay').click({ position: { x: 4, y: 4 } });
+    await expect(sessionDialog).toBeVisible();
+    await expect(sessionDialog.locator('.dialog__body')).toHaveCSS('user-select', 'text');
 
     await sessionDialog.getByRole('button', { name: '保存' }).click();
     await expect(sessionDialog.getByLabel('主机')).toHaveAttribute('aria-invalid', 'true');
@@ -308,7 +327,7 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await expect(page.locator('.search-panel')).toHaveCount(0);
 
     await testInfo.e2e.electronApp.evaluate(({ clipboard }) =>
-        clipboard.writeText('echo __NEXTERM_RIGHT_CLICK_PASTE__\r')
+        clipboard.writeText('n=PASTE__; printf "__NEXTERM_RIGHT_CLICK_%s\\n" "$n"\n')
     );
     await page.locator('.xterm').click({ button: 'right' });
     await expect(page.locator('.xterm')).toContainText('__NEXTERM_RIGHT_CLICK_PASTE__', { timeout: 10_000 });
@@ -316,6 +335,115 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await page.locator('.xterm').click({ button: 'right', modifiers: ['Shift'] });
     await expect(page.locator('.context-menu').getByRole('button', { name: '复制' })).toBeDisabled();
     await page.keyboard.press('Escape');
+
+    await page.getByRole('button', { name: '新建右侧标签组' }).first().click();
+    await expect(page.locator('.workspace .tabs-empty').filter({ hasText: '空标签组' }).first()).toBeVisible();
+    await page.getByRole('button', { name: '会话集' }).click();
+    await page.locator('.resource-row', { hasText: 'E2E Local' }).dblclick();
+    const localTabs = page.locator('.tab', { hasText: 'E2E Local' });
+    await expect(localTabs).toHaveCount(2);
+    await expect(localTabs.nth(1).locator('.dot.connected')).toBeVisible({
+        timeout: 15_000
+    });
+
+    await fs.writeFile(path.join(shellCwd, 'helper.mjs'), "export const marker='__NEXTERM_SCRIPT_' + 'IMPORT__';\n");
+    await page.getByRole('button', { name: '脚本', exact: true }).click();
+    await page.getByRole('button', { name: '新建脚本' }).click();
+    const scriptDialog = page.locator('.dialog').filter({ hasText: '新建脚本' });
+    await expect(scriptDialog).toBeVisible();
+    await scriptDialog.getByLabel('名称').fill('E2E Script');
+    await scriptDialog.getByLabel('语言').selectOption('javascript');
+    await scriptDialog
+        .getByLabel('脚本', { exact: true })
+        .fill(
+            "import { marker } from './helper.mjs';\n" +
+                'await term.send(\'printf "__NEXTERM_TERM_SEND__\\\\n"\\n\');\n' +
+                "const echoed = await term.expect('__NEXTERM_TERM_SEND__', 5000);\n" +
+                "term.print(echoed.includes('__NEXTERM_TERM_SEND__') ? '__NEXTERM_TERM_EXPECT_OK__\\n' : '__NEXTERM_TERM_EXPECT_MISS__\\n');\n" +
+                'await term.send(\'printf "__NEXTERM_LITERAL_ESCAPED_SEND__"\\\\n\');\n' +
+                "const escaped = await term.expect('__NEXTERM_LITERAL_ESCAPED_SEND__', 5000);\n" +
+                "term.print(escaped.includes('__NEXTERM_LITERAL_ESCAPED_SEND__') ? '__NEXTERM_LITERAL_SEND_OK__\\n' : '__NEXTERM_LITERAL_SEND_MISS__\\n');\n" +
+                'console.log(marker);'
+        );
+    await scriptDialog.getByRole('button', { name: '保存' }).click();
+    const e2eScriptRow = page.locator('.script-row').filter({ hasText: 'E2E Script' });
+    await expect(e2eScriptRow).toBeVisible();
+    await e2eScriptRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '执行', exact: true }).click();
+    const runDialog = page.locator('.dialog').filter({ hasText: '执行脚本' });
+    await expect(runDialog).toBeVisible();
+    const targetSelect = runDialog.getByLabel('目标窗口');
+    const targetOptions = targetSelect.locator('option:not([value=""])');
+    await expect(targetSelect).not.toHaveValue('');
+    await expect(targetOptions).toHaveCount(2);
+    await expect(targetOptions.nth(0)).toContainText('E2E Local · 窗口 1');
+    await expect(targetOptions.nth(1)).toContainText('E2E Local · 窗口 2');
+    const targetValues = await targetOptions.evaluateAll(options => options.map(option => option.value));
+    expect(new Set(targetValues).size).toBe(2);
+    await targetSelect.selectOption(targetValues[1]);
+    await expect(targetSelect).toHaveValue(targetValues[1]);
+    await runDialog.getByRole('button', { name: '执行' }).click();
+    await expect(page.locator('.xterm').filter({ hasText: '__NEXTERM_TERM_EXPECT_OK__' })).toHaveCount(1, {
+        timeout: 10_000
+    });
+    await expect(page.locator('.xterm').filter({ hasText: '__NEXTERM_LITERAL_SEND_OK__' })).toHaveCount(1, {
+        timeout: 10_000
+    });
+    await expect(page.locator('.xterm').filter({ hasText: '__NEXTERM_SCRIPT_IMPORT__' })).toHaveCount(1, {
+        timeout: 10_000
+    });
+    const e2eScriptTasks = page.locator('.task-item').filter({ hasText: 'E2E Script' });
+    await expect(e2eScriptTasks).toHaveCount(1);
+    await expect(e2eScriptTasks.first()).toContainText('退出码 0', {
+        timeout: 10_000
+    });
+    await expect(page.locator('.xterm').filter({ hasText: '__nexterm_script_file' })).toHaveCount(0);
+    await expect(page.locator('.xterm').filter({ hasText: 'stty -echo' })).toHaveCount(0);
+    await expect(page.locator('.xterm').filter({ hasText: '[NexTerm] Script' })).toHaveCount(0);
+    await e2eScriptTasks.first().getByTitle('再次执行').click();
+    await expect(e2eScriptTasks).toHaveCount(1);
+    await expect(e2eScriptTasks.first()).toContainText('退出码 0', { timeout: 10_000 });
+    await e2eScriptTasks.first().click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '再次执行' }).click();
+    await expect(e2eScriptTasks).toHaveCount(1);
+    await expect(e2eScriptTasks.first()).toContainText('退出码 0', { timeout: 10_000 });
+    await e2eScriptTasks.first().click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '删除任务' }).click();
+    await expect(e2eScriptTasks).toHaveCount(0);
+    await expect
+        .poll(async () => (await fs.readdir(shellCwd)).filter(name => name.startsWith('.nexterm-script-')))
+        .toEqual([]);
+
+    await page.getByRole('button', { name: '新建脚本' }).click();
+    const pythonScriptDialog = page.locator('.dialog').filter({ hasText: '新建脚本' });
+    await expect(pythonScriptDialog).toBeVisible();
+    await pythonScriptDialog.getByLabel('名称').fill('E2E Python Script');
+    await pythonScriptDialog.getByLabel('语言').selectOption('python');
+    await pythonScriptDialog
+        .getByLabel('脚本', { exact: true })
+        .fill(
+            'out = term.exec("pwd", expect="$ ", timeout=5000)\n' +
+                'term.print("__NEXTERM_PYTHON_EXEC_OK__\\n" if "/" in out else "__NEXTERM_PYTHON_EXEC_MISS__\\n")'
+        );
+    await pythonScriptDialog.getByRole('button', { name: '保存' }).click();
+    const e2ePythonScriptRow = page.locator('.script-row').filter({ hasText: 'E2E Python Script' });
+    await expect(e2ePythonScriptRow).toBeVisible();
+    await e2ePythonScriptRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '执行', exact: true }).click();
+    const pythonRunDialog = page.locator('.dialog').filter({ hasText: '执行脚本' });
+    await expect(pythonRunDialog).toBeVisible();
+    await expect(pythonRunDialog.getByLabel('目标窗口')).not.toHaveValue('');
+    await pythonRunDialog.getByRole('button', { name: '执行' }).click();
+    await expect(page.locator('.xterm').filter({ hasText: '__NEXTERM_PYTHON_EXEC_OK__' })).toHaveCount(1, {
+        timeout: 10_000
+    });
+    const e2ePythonTasks = page.locator('.task-item').filter({ hasText: 'E2E Python Script' });
+    await expect(e2ePythonTasks).toHaveCount(1);
+    await expect(e2ePythonTasks.first()).toContainText('退出码 0', { timeout: 10_000 });
+    await expect(page.locator('.xterm').filter({ hasText: 'NameError' })).toHaveCount(0);
+    await expect
+        .poll(async () => (await fs.readdir(shellCwd)).filter(name => name.startsWith('.nexterm-script-')))
+        .toEqual([]);
 
     const sidebarBefore = await page.locator('.sidebar').boundingBox();
     await dragElementBy(page, page.locator('.sidebar-resizer'), 58, 0);
@@ -346,7 +474,7 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
 
 test('ssh session connects and sftp directory renders from the UI', async ({}, testInfo) => {
     const { page, userDataDir } = testInfo.e2e;
-    const server = await startTestSshServer();
+    const server = await startTestSshServer({ password: '__NEXTERM_E2E_SECRET__' });
     testInfo.e2e.cleanups.push(() => server.close());
 
     await page.getByRole('button', { name: '新建会话' }).click();
@@ -358,20 +486,93 @@ test('ssh session connects and sftp directory renders from the UI', async ({}, t
     await sessionDialog.getByLabel('端口').fill(String(server.port));
     await sessionDialog.getByLabel('用户名').fill(server.username);
     await sessionDialog.getByLabel('认证').selectOption('password');
-    await sessionDialog.locator('input[type="password"]').fill(server.password);
+    await sessionDialog.getByLabel('凭据处理').selectOption('session');
     await sessionDialog.getByRole('button', { name: '保存' }).click();
     await expect(page.locator('.resource-row', { hasText: 'E2E SSH' })).toBeVisible();
 
+    const sessionDataPath = path.join(userDataDir, 'data', 'sessions.json');
+    const credentialDataPath = path.join(userDataDir, 'data', 'credentials.json');
+    await expect.poll(() => pathExists(sessionDataPath)).toBe(true);
+    const savedSessions = JSON.parse(await fs.readFile(sessionDataPath, 'utf8'));
+    const savedSshSession = savedSessions.sessions.find(session => session.name === 'E2E SSH');
+    expect(savedSshSession.password).toBeUndefined();
+    expect(savedSshSession.passphrase).toBeUndefined();
+    expect(savedSshSession.credentialSaveMode).toBe('session');
+    expect(savedSshSession.credentialId).toBeUndefined();
+    expect(savedSshSession.passphraseCredentialId).toBeUndefined();
+    expect(await pathExists(credentialDataPath)).toBe(false);
+    expect(await fs.readFile(sessionDataPath, 'utf8')).not.toContain(server.password);
+
     await page.locator('.resource-row', { hasText: 'E2E SSH' }).dblclick();
+    const authDialog = page.locator('.dialog').filter({ hasText: 'SSH 密码' });
+    await expect(authDialog).toBeVisible();
+    await authDialog.locator('input[type="password"]').fill(server.password);
+    await authDialog.getByRole('button', { name: '连接' }).click();
     await expect(page.locator('.tab', { hasText: 'E2E SSH' }).locator('.dot.connected')).toBeVisible({
         timeout: 15_000
     });
     await expect(page.locator('.xterm')).toContainText('mock ssh ready', { timeout: 10_000 });
 
-    const knownHostsPath = path.join(userDataDir, 'data', 'known_hosts.json');
+    await page.getByRole('button', { name: '脚本', exact: true }).click();
+    await page.getByRole('button', { name: '新建脚本' }).click();
+    const scriptDialog = page.locator('.dialog').filter({ hasText: '新建脚本' });
+    await expect(scriptDialog).toBeVisible();
+    await scriptDialog.getByLabel('名称').fill('E2E SSH Script');
+    await scriptDialog.getByLabel('语言').selectOption('javascript');
+    await scriptDialog
+        .getByLabel('脚本', { exact: true })
+        .fill(
+            'const out = await term.exec("pwd", { expect: "$ ", timeout: 5000 });\n' +
+                "term.print(out.includes('/home/e2e') ? '__NEXTERM_SSH_SCRIPT_LOCAL_RUNNER__\\n' : '__NEXTERM_SSH_SCRIPT_MISS__\\n');"
+        );
+    await scriptDialog.getByRole('button', { name: '保存' }).click();
+    const sshScriptRow = page.locator('.script-row').filter({ hasText: 'E2E SSH Script' });
+    await expect(sshScriptRow).toBeVisible();
+    await sshScriptRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '执行', exact: true }).click();
+    const runDialog = page.locator('.dialog').filter({ hasText: '执行脚本' });
+    await expect(runDialog).toBeVisible();
+    await expect(runDialog.getByLabel('目标窗口')).not.toHaveValue('');
+    await runDialog.getByRole('button', { name: '执行' }).click();
+    await expect(page.locator('.xterm')).toContainText('__NEXTERM_SSH_SCRIPT_LOCAL_RUNNER__', { timeout: 10_000 });
+    await expect(page.locator('.xterm').filter({ hasText: '__nexterm_script_file' })).toHaveCount(0);
+    await expect(page.locator('.xterm').filter({ hasText: '[NexTerm] Script' })).toHaveCount(0);
+    const sshScriptTasks = page.locator('.task-item').filter({ hasText: 'E2E SSH Script' });
+    await expect(sshScriptTasks).toHaveCount(1);
+    await expect(sshScriptTasks.first()).toContainText('退出码 0', { timeout: 10_000 });
+
+    const knownHostsPath = path.join(userDataDir, '.ssh', 'known_hosts');
     await expect.poll(() => pathExists(knownHostsPath)).toBe(true);
-    const knownHosts = JSON.parse(await fs.readFile(knownHostsPath, 'utf8'));
-    expect(Object.keys(knownHosts.hosts || {})).toContain(`${server.host}:${server.port}`);
+    const knownHosts = await fs.readFile(knownHostsPath, 'utf8');
+    expect(knownHosts).toContain(`[${server.host}]:${server.port}`);
+    expect(knownHosts).toContain('ssh-rsa');
+
+    await writeTestPrivateKey(userDataDir);
+    await page.getByRole('button', { name: 'Keychain', exact: true }).click();
+    const keychainPanel = page.locator('.security-panel').locator('.keychain-item');
+    const keychainRow = keychainPanel.filter({ hasText: 'id_ed25519' });
+    await expect(keychainRow).toBeVisible();
+    await keychainRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '查看详情' }).click();
+    const keyDetailDialog = page.locator('.dialog').filter({ hasText: 'SSH Key 详情' });
+    await expect(keyDetailDialog).toContainText('私钥路径');
+    await expect(keyDetailDialog).toContainText(path.join(userDataDir, '.ssh', 'id_ed25519'));
+    await keyDetailDialog.getByRole('button', { name: '关闭' }).last().click();
+    await page.getByRole('button', { name: 'Known Host', exact: true }).click();
+    const knownHostsPanel = page.locator('.security-panel');
+    await expect(knownHostsPanel).toContainText(`${server.host}:${server.port}`);
+    const knownHostRow = knownHostsPanel.locator('.known-host').filter({ hasText: `${server.host}:${server.port}` });
+    await knownHostRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '查看详情' }).click();
+    const knownHostDetailDialog = page.locator('.dialog').filter({ hasText: 'Known Host 详情' });
+    await expect(knownHostDetailDialog).toContainText('指纹');
+    await expect(knownHostDetailDialog).toContainText('来源');
+    await knownHostDetailDialog.getByRole('button', { name: '关闭' }).last().click();
+    await knownHostRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '重新信任' }).click();
+    await expect(knownHostsPanel).toContainText('暂无已信任主机');
+    const knownHostsAfterRemove = await fs.readFile(knownHostsPath, 'utf8');
+    expect(knownHostsAfterRemove).not.toContain(`[${server.host}]:${server.port}`);
 
     await page.getByRole('button', { name: '文件', exact: true }).click();
     const filePanel = page.locator('.file-panel');

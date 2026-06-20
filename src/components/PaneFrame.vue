@@ -22,7 +22,13 @@
                 >
                     <span class="dot" :class="session.status" />
                     <span class="tab__title">{{ session.name }}</span>
-                    <span class="tab__close" title="关闭标签" @click.stop="closeTab(session.sessionId)">
+                    <span
+                        class="tab__close"
+                        title="关闭标签"
+                        @mousedown.stop
+                        @dragstart.stop.prevent
+                        @click.stop="closeTab(session.sessionId)"
+                    >
                         <X :size="13" :stroke-width="2" />
                     </span>
                 </button>
@@ -350,6 +356,7 @@
         height: 18px;
         border-radius: 5px;
         color: var(--nx-text-dim);
+        cursor: default;
         flex: 0 0 auto;
     }
     .tab__close:hover {

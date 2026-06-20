@@ -40,4 +40,8 @@ const SFTP_EVT = {
     PROGRESS: 'sftp:progress'
 };
 
-module.exports = { TELNET, TERMINAL_STATUS, TERMINAL_EVT, SFTP_EVT };
+const SCRIPT_EVT = {
+    TASK: 'script:task'
+};
+
+module.exports = { TELNET, TERMINAL_STATUS, TERMINAL_EVT, SFTP_EVT, SCRIPT_EVT };

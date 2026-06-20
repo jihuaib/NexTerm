@@ -1,5 +1,5 @@
 <template>
-    <div class="overlay" @click.self="close">
+    <div class="overlay">
         <div ref="panelRef" class="panel" :class="{ 'is-dragging': dragging }" :style="surfaceStyle">
             <nav class="cats">
                 <div class="cats__title" title="拖动移动弹窗" @pointerdown="startDrag">设置</div>
@@ -169,6 +169,14 @@
         flex: 1;
         overflow-y: auto;
         padding: 6px 22px 22px;
+        user-select: text;
+    }
+    .content__body :deep(*) {
+        user-select: text;
+    }
+    .content__body :deep(button),
+    .content__body :deep(select) {
+        user-select: none;
     }
 
     @media (max-width: 680px) {

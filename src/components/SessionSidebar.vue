@@ -56,7 +56,7 @@
                 </div>
             </template>
 
-            <template v-else>
+            <template v-else-if="activePanel === 'files'">
                 <div
                     class="file-panel"
                     :class="{ 'is-file-dragging': fileDragActive }"
@@ -155,6 +155,14 @@
                     </div>
                 </div>
             </template>
+
+            <ScriptWorkbench v-else-if="activePanel === 'scripts'" />
+            <div v-else-if="activePanel === 'keychain'" class="security-panel">
+                <KeychainSection />
+            </div>
+            <div v-else-if="activePanel === 'known-host'" class="security-panel">
+                <KnownHostsSection />
+            </div>
         </div>
 
         <ContextMenu :visible="folderMenu.visible" :x="folderMenu.x" :y="folderMenu.y">
@@ -336,9 +344,12 @@
     import {
         ArrowUp,
         Download,
+        FileCode,
         Files,
+        Fingerprint,
         FolderPlus,
         FolderTree,
+        KeyRound,
         LocateFixed,
         Pencil,
         Play,
@@ -369,6 +380,9 @@
     import ContextMenu from './ui/ContextMenu.vue';
     import EmptyState from './ui/EmptyState.vue';
     import IconButton from './ui/IconButton.vue';
+    import KeychainSection from './settings/KeychainSection.vue';
+    import KnownHostsSection from './settings/KnownHostsSection.vue';
+    import ScriptWorkbench from './ScriptWorkbench.vue';
     import SessionDialog from './SessionDialog.vue';
 
     const SAVED_SESSION_DND = 'application/x-nexterm-saved-session';
@@ -443,13 +457,19 @@
 
     const panels = [
         { id: 'sessions', label: '会话集', icon: FolderTree },
-        { id: 'files', label: '文件', icon: Files }
+        { id: 'files', label: '文件', icon: Files },
+        { id: 'scripts', label: '脚本', icon: FileCode },
+        { id: 'keychain', label: 'Keychain', icon: KeyRound },
+        { id: 'known-host', label: 'Known Host', icon: Fingerprint }
     ];
 
     const activeTitle = computed(() => panels.find(panel => panel.id === activePanel.value)?.label || '');
     const activeMeta = computed(() => {
         if (activePanel.value === 'sessions')
             return `${store.sessionFolders.length} 文件夹 · ${store.sessions.length} 会话`;
+        if (activePanel.value === 'scripts') return `${store.scripts.length} 脚本 · ${store.scriptTasks.length} 任务`;
+        if (activePanel.value === 'keychain') return '~/.ssh keys';
+        if (activePanel.value === 'known-host') return '~/.ssh/known_hosts';
         return fileSessionId.value ? remotePath.value : '未连接';
     });
     const visibleSessionTreeNodes = computed(() => filterTreeNodes(store.sessionTree.children || [], query.value));
@@ -633,14 +653,17 @@
         if (sftpCwdBySession[sessionId]) return sftpCwdBySession[sessionId];
         if (!window.sftpApi?.cwd) return '/';
 
-        try {
-            const res = await window.sftpApi.cwd({ sessionId });
-            if (res.status === 'success' && res.data?.path) {
-                sftpCwdBySession[sessionId] = res.data.path;
-                return res.data.path;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            try {
+                const res = await window.sftpApi.cwd({ sessionId });
+                if (res.status === 'success' && res.data?.path) {
+                    sftpCwdBySession[sessionId] = res.data.path;
+                    if (res.data.path !== '/' || attempt === 3) return res.data.path;
+                }
+            } catch (_err) {
+                /* list fallback will show root if cwd cannot be queried */
             }
-        } catch (_err) {
-            /* list fallback will show root if cwd cannot be queried */
+            await new Promise(resolve => window.setTimeout(resolve, 120));
         }
         return '/';
     }
@@ -1371,6 +1394,19 @@
         min-height: 0;
         display: flex;
         flex-direction: column;
+    }
+    .security-panel {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 0 12px 14px;
+        border-top: 1px solid var(--nx-border);
+    }
+    .security-panel :deep(.nx-group__head) {
+        padding-top: 12px;
+    }
+    .security-panel :deep(.nx-group) {
+        border-bottom: 0;
     }
     .folder-field {
         display: flex;

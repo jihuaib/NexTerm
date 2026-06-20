@@ -21,6 +21,8 @@ npm run start    # 仅启动本地浏览器预览：http://127.0.0.1:5273
 
 `npm install` 会自动重编 `node-pty` 到当前 Electron ABI，Windows / macOS / Linux 都走同一套安装流程。
 
+Electron 固定在 `22.3.27`：这是保留 Windows 7 / 8 / 8.1 兼容的最后一个 Electron 主线。Electron 23+ 已移除这些系统支持，不要直接升级到 23 或更高版本。
+
 ## 构建
 
 ```bash

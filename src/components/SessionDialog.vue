@@ -66,10 +66,17 @@
                         </select>
                     </label>
 
-                    <label v-if="form.authType === 'password'" class="wide">
-                        <span>密码</span>
-                        <input v-model="form.password" type="password" placeholder="可留空，连接时询问" />
+                    <label v-if="form.authType !== 'agent'">
+                        <span>凭据处理</span>
+                        <select v-model="form.credentialSaveMode">
+                            <option value="prompt">每次询问</option>
+                            <option value="session">本次会话保留</option>
+                        </select>
                     </label>
+
+                    <div v-if="form.authType === 'password'" class="credential-note wide">
+                        {{ credentialModeDescription }}
+                    </div>
 
                     <template v-else-if="form.authType === 'key'">
                         <label class="wide" :class="{ 'is-invalid': hasFieldError('privateKeyPath') }">
@@ -81,10 +88,7 @@
                                 @input="clearFieldError('privateKeyPath')"
                             />
                         </label>
-                        <label class="wide">
-                            <span>私钥口令</span>
-                            <input v-model="form.passphrase" type="password" placeholder="私钥无口令可留空" />
-                        </label>
+                        <div class="credential-note wide">{{ credentialModeDescription }}</div>
                     </template>
                 </template>
             </div>
@@ -118,7 +122,12 @@
     import { computed, reactive, ref, watch } from 'vue';
     import { Server, SquareTerminal } from '@lucide/vue';
     import { getCreateFolderId, saveSession, store } from '../store';
-    import { defaultPortForProtocol, isLocalSessionProtocol, isSshSessionProtocol } from '../models/resources';
+    import {
+        defaultPortForProtocol,
+        isLocalSessionProtocol,
+        isSshSessionProtocol,
+        normalizeCredentialSaveMode
+    } from '../models/resources';
     import { notifyError, notifySuccess } from '../services/notify';
     import { useFieldErrors } from '../utils/formErrors';
     import BaseDialog from './ui/BaseDialog.vue';
@@ -173,9 +182,8 @@
             ),
         username: props.session?.username || '',
         authType: props.session?.authType || (props.session?.privateKeyPath ? 'key' : 'password'),
-        password: props.session?.password || '',
+        credentialSaveMode: normalizeCredentialSaveMode(props.session?.credentialSaveMode),
         privateKeyPath: props.session?.privateKeyPath || '',
-        passphrase: props.session?.passphrase || '',
         shell: props.session?.shell || (!props.session ? store.settings.defaultLocalShell : ''),
         cwd: props.session?.cwd || (!props.session ? store.settings.defaultLocalCwd : ''),
         tags: Array.isArray(props.session?.tags) ? [...props.session.tags] : [],
@@ -188,6 +196,12 @@
         if (isLocal.value) return '本地 Shell 会话配置';
         if (isSsh.value) return 'SSH 终端与 SFTP 文件配置';
         return 'Telnet 会话配置';
+    });
+    const credentialModeDescription = computed(() => {
+        if (form.credentialSaveMode === 'session') {
+            return '连接时输入的凭据只保留在当前终端标签内，关闭标签或重启应用后会重新询问。';
+        }
+        return '连接时询问凭据，不写入会话文件；每次新连接都会重新输入。';
     });
     const { setFieldError, clearFieldError, clearFieldErrors, hasFieldError } = useFieldErrors();
 
@@ -208,6 +222,14 @@
         }
     );
 
+    watch(
+        () => form.authType,
+        authType => {
+            clearFieldErrors();
+            if (authType === 'agent') form.credentialSaveMode = 'prompt';
+        }
+    );
+
     function buildPayload() {
         const base = {
             id: form.id,
@@ -216,9 +238,8 @@
             protocol: form.protocol,
             username: String(form.username || '').trim(),
             authType: form.authType,
-            password: String(form.password || ''),
+            credentialSaveMode: isSsh.value ? normalizeCredentialSaveMode(form.credentialSaveMode) : 'prompt',
             privateKeyPath: String(form.privateKeyPath || '').trim(),
-            passphrase: String(form.passphrase || ''),
             tags: Array.isArray(form.tags) ? [...form.tags] : [],
             description: String(form.description || '')
         };
@@ -262,7 +283,6 @@
             notifyError('请填写私钥路径', '表单输入错误');
             return;
         }
-
         submitting.value = true;
         try {
             const res = await saveSession(payload);
@@ -320,6 +340,20 @@
     }
     label.is-invalid span {
         color: var(--nx-danger);
+    }
+    label small {
+        color: var(--nx-danger);
+        font-size: 11px;
+    }
+    .credential-note {
+        grid-column: 1 / -1;
+        padding: 9px 10px;
+        border: 1px solid var(--nx-border-soft);
+        border-radius: 7px;
+        background: var(--nx-control-muted);
+        color: var(--nx-text-dim);
+        font-size: 12px;
+        line-height: 1.45;
     }
     input,
     select {
