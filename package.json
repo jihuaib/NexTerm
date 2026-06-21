@@ -22,7 +22,7 @@
         "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"vite\" \"npm:dev:electron\"",
         "dev:electron": "wait-on tcp:127.0.0.1:5273 && cross-env NODE_ENV=development electron .",
         "install-deps:arch": "electron-builder install-app-deps",
-        "postinstall": "electron-rebuild -f -w node-pty -w @serialport/bindings-cpp && npm run install-deps:arch",
+        "postinstall": "electron-rebuild -f -w node-pty,@serialport/bindings-cpp && npm run install-deps:arch",
         "build": "vite build",
         "lint": "eslint --ext .js,.cjs,.vue src electron scripts e2e vite.config.js",
         "lint:fix": "eslint --fix --ext .js,.cjs,.vue src electron scripts e2e vite.config.js",
