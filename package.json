@@ -43,7 +43,8 @@
         "release:mac": "node scripts/release.js --mac",
         "preview": "vite preview",
         "test:e2e": "npm run build && playwright test",
-        "test:e2e:ci": "npm run build && playwright test --reporter=line"
+        "test:e2e:ci": "npm run build && playwright test --reporter=line",
+        "screenshots": "npm run build && node scripts/capture-screenshots.cjs"
     },
     "build": {
         "appId": "com.jihuaib.nexterm",
