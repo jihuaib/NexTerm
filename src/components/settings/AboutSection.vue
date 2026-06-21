@@ -2,10 +2,11 @@
     <div class="about">
         <div class="logo">NexTerm</div>
         <p class="ver">版本 {{ currentVersion }} · 基础版</p>
-        <p class="desc">跨平台远程接入终端。当前支持 SSH、Telnet、Local Shell、SFTP 文件面板与终端日志。</p>
+        <p class="desc">
+            跨平台远程接入终端。当前支持 SSH、Telnet、Serial、Local Shell、SFTP 文件面板、TCP / UDP / SSH
+            端口转发与终端日志。
+        </p>
         <ul class="roadmap">
-            <li>规划中：串口</li>
-            <li>规划中：隧道转发</li>
             <li>规划中：更多会话导入格式</li>
         </ul>
     </div>

@@ -17,6 +17,59 @@ export const UNGROUPED_FOLDER_ID = 'ungrouped';
 export const SESSION_ROOT_ID = 'sessions-root';
 export const FILE_ROOT_ID = 'files-remote-root';
 
+export const SESSION_COLOR_OPTIONS = [
+    {
+        value: 'blue',
+        label: '蓝色',
+        swatch: '#3b82f6',
+        bg: 'rgba(59, 130, 246, 0.18)',
+        activeBg: 'rgba(59, 130, 246, 0.32)',
+        border: 'rgba(96, 165, 250, 0.72)'
+    },
+    {
+        value: 'green',
+        label: '绿色',
+        swatch: '#10b981',
+        bg: 'rgba(16, 185, 129, 0.18)',
+        activeBg: 'rgba(16, 185, 129, 0.32)',
+        border: 'rgba(52, 211, 153, 0.72)'
+    },
+    {
+        value: 'amber',
+        label: '琥珀',
+        swatch: '#f59e0b',
+        bg: 'rgba(245, 158, 11, 0.18)',
+        activeBg: 'rgba(245, 158, 11, 0.32)',
+        border: 'rgba(251, 191, 36, 0.72)'
+    },
+    {
+        value: 'rose',
+        label: '玫红',
+        swatch: '#f43f5e',
+        bg: 'rgba(244, 63, 94, 0.18)',
+        activeBg: 'rgba(244, 63, 94, 0.32)',
+        border: 'rgba(251, 113, 133, 0.72)'
+    },
+    {
+        value: 'violet',
+        label: '紫色',
+        swatch: '#8b5cf6',
+        bg: 'rgba(139, 92, 246, 0.18)',
+        activeBg: 'rgba(139, 92, 246, 0.32)',
+        border: 'rgba(167, 139, 250, 0.72)'
+    },
+    {
+        value: 'slate',
+        label: '灰色',
+        swatch: '#64748b',
+        bg: 'rgba(100, 116, 139, 0.18)',
+        activeBg: 'rgba(100, 116, 139, 0.32)',
+        border: 'rgba(148, 163, 184, 0.72)'
+    }
+];
+export const DEFAULT_SESSION_COLOR = SESSION_COLOR_OPTIONS[0].value;
+const SESSION_COLOR_VALUES = new Set(SESSION_COLOR_OPTIONS.map(color => color.value));
+
 export function isLocalSessionProtocol(protocol) {
     return protocol === 'local' || protocol === 'shell';
 }
@@ -25,10 +78,59 @@ export function isSshSessionProtocol(protocol) {
     return protocol === 'ssh';
 }
 
+export function isSerialSessionProtocol(protocol) {
+    return protocol === 'serial';
+}
+
+export function normalizeSessionColor(value) {
+    const next = String(value || '').trim();
+    return SESSION_COLOR_VALUES.has(next) ? next : DEFAULT_SESSION_COLOR;
+}
+
+export function getSessionColorOption(value) {
+    const normalized = normalizeSessionColor(value);
+    return SESSION_COLOR_OPTIONS.find(color => color.value === normalized) || SESSION_COLOR_OPTIONS[0];
+}
+
 export function defaultPortForProtocol(protocol, fallback = 23) {
     if (isLocalSessionProtocol(protocol)) return null;
+    if (isSerialSessionProtocol(protocol)) return null;
     if (isSshSessionProtocol(protocol)) return 22;
     return Number(fallback) || 23;
+}
+
+export const SERIAL_DEFAULTS = {
+    path: '',
+    baudRate: 115200,
+    dataBits: 8,
+    stopBits: 1,
+    parity: 'none',
+    flowControl: 'none',
+    dtr: true,
+    rts: true
+};
+
+export function normalizeSerialParity(value) {
+    const next = String(value || '').trim().toLowerCase();
+    return ['none', 'even', 'odd', 'mark', 'space'].includes(next) ? next : SERIAL_DEFAULTS.parity;
+}
+
+export function normalizeSerialFlowControl(value) {
+    const next = String(value || '').trim().toLowerCase();
+    return ['none', 'hardware', 'software'].includes(next) ? next : SERIAL_DEFAULTS.flowControl;
+}
+
+export function normalizeSerialNumber(value, fallback, allowed = []) {
+    const next = Number(value);
+    if (!Number.isFinite(next)) return fallback;
+    if (allowed.length && !allowed.includes(next)) return fallback;
+    return next;
+}
+
+export function normalizeSerialBoolean(value, fallback = true) {
+    if (value === true || value === 'true' || value === 1 || value === '1') return true;
+    if (value === false || value === 'false' || value === 0 || value === '0') return false;
+    return fallback;
 }
 
 export function normalizeCredentialSaveMode(value) {
@@ -58,24 +160,38 @@ export function normalizeSessionProfile(session = {}, defaults = {}) {
     const now = new Date().toISOString();
     const protocol = session.protocol || defaults.defaultProtocol || 'telnet';
     const isLocal = isLocalSessionProtocol(protocol);
+    const isSerial = isSerialSessionProtocol(protocol);
     const host = String(session.host || '').trim();
+    const serialPath = String(session.serialPath || '').trim();
     const port = defaultPortForProtocol(protocol, defaults.defaultPort);
     return {
         id: session.id || makeEntityId('session'),
         type: RESOURCE_NODE_TYPES.SESSION,
         resource: RESOURCE_KINDS.SESSION,
-        name: String(session.name || host || (isLocal ? 'Local Shell' : '未命名会话')).trim(),
+        name: String(session.name || host || serialPath || (isLocal ? 'Local Shell' : '未命名会话')).trim(),
+        color: normalizeSessionColor(session.color),
         protocol,
-        host,
-        port: isLocal ? null : Number(session.port) || port,
+        host: isSerial ? '' : host,
+        port: isLocal || isSerial ? null : Number(session.port) || port,
         username: session.username || '',
         authType: session.authType || (session.privateKeyPath ? 'key' : 'password'),
-        credentialSaveMode: isLocal ? 'prompt' : normalizeCredentialSaveMode(session.credentialSaveMode),
+        credentialSaveMode: isLocal || isSerial ? 'prompt' : normalizeCredentialSaveMode(session.credentialSaveMode),
         password: session.password || '',
         privateKeyPath: session.privateKeyPath || '',
         passphrase: session.passphrase || '',
         shell: session.shell || '',
         cwd: session.cwd || '',
+        serialPath,
+        serialBaudRate: normalizeSerialNumber(
+            session.serialBaudRate,
+            defaults.defaultSerialBaudRate || SERIAL_DEFAULTS.baudRate
+        ),
+        serialDataBits: normalizeSerialNumber(session.serialDataBits, SERIAL_DEFAULTS.dataBits, [5, 6, 7, 8]),
+        serialStopBits: normalizeSerialNumber(session.serialStopBits, SERIAL_DEFAULTS.stopBits, [1, 2]),
+        serialParity: normalizeSerialParity(session.serialParity),
+        serialFlowControl: normalizeSerialFlowControl(session.serialFlowControl),
+        serialDtr: normalizeSerialBoolean(session.serialDtr, SERIAL_DEFAULTS.dtr),
+        serialRts: normalizeSerialBoolean(session.serialRts, SERIAL_DEFAULTS.rts),
         folderId: session.folderId || null,
         tags: Array.isArray(session.tags) ? session.tags : [],
         description: session.description || '',

@@ -2,7 +2,7 @@
     <BaseDialog
         :title="session ? '编辑会话' : '新建会话'"
         :subtitle="dialogSubtitle"
-        width="460px"
+        width="580px"
         @close="$emit('close')"
     >
         <div class="session-type">
@@ -13,10 +13,7 @@
             <div class="form-grid common-grid">
                 <label>
                     <span>名称</span>
-                    <input
-                        v-model="form.name"
-                        :placeholder="isLocal ? '可选，默认显示 Local Shell' : '可选，默认使用主机地址'"
-                    />
+                    <input v-model="form.name" :placeholder="namePlaceholder" />
                 </label>
 
                 <label>
@@ -28,9 +25,29 @@
                         </option>
                     </select>
                 </label>
+
+                <label class="wide session-color-field">
+                    <span>颜色</span>
+                    <div class="session-color-options" role="radiogroup" aria-label="会话颜色">
+                        <button
+                            v-for="color in sessionColors"
+                            :key="color.value"
+                            class="session-color-option"
+                            :class="{ active: form.color === color.value }"
+                            :style="{ '--session-color-swatch': color.swatch }"
+                            type="button"
+                            :title="color.label"
+                            :aria-label="color.label"
+                            :aria-pressed="form.color === color.value ? 'true' : 'false'"
+                            @click="form.color = color.value"
+                        >
+                            <span />
+                        </button>
+                    </div>
+                </label>
             </div>
 
-            <div v-if="!isLocal" class="form-grid type-grid">
+            <div v-if="isNetwork" class="form-grid type-grid">
                 <label :class="{ 'is-invalid': hasFieldError('host') }">
                     <span>主机</span>
                     <input
@@ -93,7 +110,7 @@
                 </template>
             </div>
 
-            <div v-else class="form-grid type-grid">
+            <div v-else-if="isLocal" class="form-grid type-grid">
                 <label class="wide">
                     <span>Shell</span>
                     <input
@@ -105,6 +122,99 @@
                 <label class="wide">
                     <span>工作目录</span>
                     <input v-model="form.cwd" placeholder="默认使用用户主目录" />
+                </label>
+            </div>
+
+            <div v-else class="form-grid type-grid">
+                <label class="wide serial-path-field" :class="{ 'is-invalid': hasFieldError('serialPath') }">
+                    <div class="serial-field-head">
+                        <span>串口设备</span>
+                        <button
+                            class="serial-refresh"
+                            type="button"
+                            title="刷新串口列表"
+                            :disabled="serialPortsLoading"
+                            @click="loadSerialPorts"
+                        >
+                            <RefreshCw :size="14" :stroke-width="2" />
+                        </button>
+                    </div>
+                    <select
+                        v-model="form.serialPath"
+                        :disabled="serialPortsLoading"
+                        @change="clearFieldError('serialPath')"
+                    >
+                        <option value="">选择串口</option>
+                        <option
+                            v-if="form.serialPath && !serialPortOptions.some(port => port.path === form.serialPath)"
+                            :value="form.serialPath"
+                        >
+                            {{ form.serialPath }}
+                        </option>
+                        <option v-for="port in serialPortOptions" :key="port.path" :value="port.path">
+                            {{ port.label || port.path }}
+                        </option>
+                    </select>
+                    <input
+                        v-model="form.serialPath"
+                        placeholder="macOS: /dev/tty.usbserial-*，Windows: COM3"
+                        :aria-invalid="hasFieldError('serialPath') ? 'true' : 'false'"
+                        @input="clearFieldError('serialPath')"
+                    />
+                    <small v-if="serialPortsError">{{ serialPortsError }}</small>
+                </label>
+
+                <label>
+                    <span>波特率</span>
+                    <input v-model.number="form.serialBaudRate" type="number" min="1" step="1" />
+                </label>
+
+                <label>
+                    <span>数据位</span>
+                    <select v-model.number="form.serialDataBits">
+                        <option :value="5">5</option>
+                        <option :value="6">6</option>
+                        <option :value="7">7</option>
+                        <option :value="8">8</option>
+                    </select>
+                </label>
+
+                <label>
+                    <span>停止位</span>
+                    <select v-model.number="form.serialStopBits">
+                        <option :value="1">1</option>
+                        <option :value="2">2</option>
+                    </select>
+                </label>
+
+                <label>
+                    <span>校验</span>
+                    <select v-model="form.serialParity">
+                        <option value="none">None</option>
+                        <option value="even">Even</option>
+                        <option value="odd">Odd</option>
+                        <option value="mark">Mark</option>
+                        <option value="space">Space</option>
+                    </select>
+                </label>
+
+                <label class="wide">
+                    <span>流控</span>
+                    <select v-model="form.serialFlowControl">
+                        <option value="none">无</option>
+                        <option value="hardware">硬件 RTS/CTS</option>
+                        <option value="software">软件 XON/XOFF</option>
+                    </select>
+                </label>
+
+                <label class="serial-check">
+                    <input v-model="form.serialDtr" type="checkbox" />
+                    <span>DTR</span>
+                </label>
+
+                <label class="serial-check">
+                    <input v-model="form.serialRts" type="checkbox" />
+                    <span>RTS</span>
                 </label>
             </div>
         </div>
@@ -119,14 +229,21 @@
 </template>
 
 <script setup>
-    import { computed, reactive, ref, watch } from 'vue';
-    import { Server, SquareTerminal } from '@lucide/vue';
+    import { computed, onMounted, reactive, ref, watch } from 'vue';
+    import { Cable, RefreshCw, Server, SquareTerminal } from '@lucide/vue';
     import { getCreateFolderId, saveSession, store } from '../store';
     import {
         defaultPortForProtocol,
         isLocalSessionProtocol,
+        isSerialSessionProtocol,
         isSshSessionProtocol,
-        normalizeCredentialSaveMode
+        normalizeCredentialSaveMode,
+        normalizeSessionColor,
+        SESSION_COLOR_OPTIONS,
+        normalizeSerialBoolean,
+        normalizeSerialFlowControl,
+        normalizeSerialNumber,
+        normalizeSerialParity
     } from '../models/resources';
     import { notifyError, notifySuccess } from '../services/notify';
     import { useFieldErrors } from '../utils/formErrors';
@@ -142,8 +259,10 @@
     const sessionTypes = [
         { value: 'telnet', label: 'Telnet', icon: Server },
         { value: 'ssh', label: 'SSH / SFTP', icon: Server },
+        { value: 'serial', label: 'Serial', icon: Cable },
         { value: 'local', label: 'Local Shell', icon: SquareTerminal }
     ];
+    const sessionColors = SESSION_COLOR_OPTIONS;
 
     const folderOptions = computed(() => {
         const byId = new Map(store.sessionFolders.map(folder => [folder.id, folder]));
@@ -167,10 +286,19 @@
         return props.folderId || getCreateFolderId();
     }
 
+    function initialSessionColor() {
+        if (props.session) return normalizeSessionColor(props.session.color);
+        return sessionColors[store.sessions.length % sessionColors.length]?.value || normalizeSessionColor('');
+    }
+
     const submitting = ref(false);
+    const serialPorts = ref([]);
+    const serialPortsLoading = ref(false);
+    const serialPortsError = ref('');
     const form = reactive({
         id: props.session?.id,
         name: props.session?.name || '',
+        color: initialSessionColor(),
         folderId: initialFolderId(),
         protocol: props.session?.protocol || store.settings.defaultProtocol,
         host: props.session?.host || '',
@@ -186,14 +314,43 @@
         privateKeyPath: props.session?.privateKeyPath || '',
         shell: props.session?.shell || (!props.session ? store.settings.defaultLocalShell : ''),
         cwd: props.session?.cwd || (!props.session ? store.settings.defaultLocalCwd : ''),
+        serialPath: props.session?.serialPath || '',
+        serialBaudRate: normalizeSerialNumber(
+            props.session?.serialBaudRate,
+            store.settings.defaultSerialBaudRate || 115200
+        ),
+        serialDataBits: normalizeSerialNumber(
+            props.session?.serialDataBits,
+            store.settings.defaultSerialDataBits || 8,
+            [5, 6, 7, 8]
+        ),
+        serialStopBits: normalizeSerialNumber(props.session?.serialStopBits, store.settings.defaultSerialStopBits || 1, [
+            1,
+            2
+        ]),
+        serialParity: normalizeSerialParity(props.session?.serialParity || store.settings.defaultSerialParity),
+        serialFlowControl: normalizeSerialFlowControl(
+            props.session?.serialFlowControl || store.settings.defaultSerialFlowControl
+        ),
+        serialDtr: normalizeSerialBoolean(props.session?.serialDtr, store.settings.defaultSerialDtr),
+        serialRts: normalizeSerialBoolean(props.session?.serialRts, store.settings.defaultSerialRts),
         tags: Array.isArray(props.session?.tags) ? [...props.session.tags] : [],
         description: props.session?.description || ''
     });
 
     const isLocal = computed(() => isLocalSessionProtocol(form.protocol));
     const isSsh = computed(() => isSshSessionProtocol(form.protocol));
+    const isSerial = computed(() => isSerialSessionProtocol(form.protocol));
+    const isNetwork = computed(() => !isLocal.value && !isSerial.value);
+    const serialPortOptions = computed(() => serialPorts.value);
+    const namePlaceholder = computed(() => {
+        if (isLocal.value) return '可选，默认显示 Local Shell';
+        if (isSerial.value) return '可选，默认显示串口设备';
+        return '可选，默认使用主机地址';
+    });
     const dialogSubtitle = computed(() => {
         if (isLocal.value) return '本地 Shell 会话配置';
+        if (isSerial.value) return '串口终端配置';
         if (isSsh.value) return 'SSH 终端与 SFTP 文件配置';
         return 'Telnet 会话配置';
     });
@@ -204,6 +361,32 @@
         return '连接时询问凭据，不写入会话文件；每次新连接都会重新输入。';
     });
     const { setFieldError, clearFieldError, clearFieldErrors, hasFieldError } = useFieldErrors();
+
+    async function loadSerialPorts() {
+        if (!window.terminalApi?.listSerialPorts) {
+            serialPortsError.value = '当前环境不支持串口枚举';
+            return;
+        }
+        serialPortsLoading.value = true;
+        serialPortsError.value = '';
+        try {
+            const res = await window.terminalApi.listSerialPorts();
+            if (res.status === 'success') {
+                serialPorts.value = Array.isArray(res.data) ? res.data : [];
+                if (!form.serialPath && serialPorts.value[0]?.path) form.serialPath = serialPorts.value[0].path;
+            } else {
+                serialPortsError.value = res.msg || '串口列表读取失败';
+            }
+        } catch (err) {
+            serialPortsError.value = err?.message || String(err);
+        } finally {
+            serialPortsLoading.value = false;
+        }
+    }
+
+    onMounted(() => {
+        if (isSerial.value) loadSerialPorts();
+    });
 
     watch(
         () => form.protocol,
@@ -218,6 +401,25 @@
             if (isLocalSessionProtocol(protocol)) {
                 if (!form.shell) form.shell = store.settings.defaultLocalShell || '';
                 if (!form.cwd) form.cwd = store.settings.defaultLocalCwd || '';
+            }
+            if (isSerialSessionProtocol(protocol)) {
+                form.serialBaudRate = form.serialBaudRate || store.settings.defaultSerialBaudRate || 115200;
+                form.serialDataBits = normalizeSerialNumber(
+                    form.serialDataBits,
+                    store.settings.defaultSerialDataBits || 8,
+                    [5, 6, 7, 8]
+                );
+                form.serialStopBits = normalizeSerialNumber(form.serialStopBits, store.settings.defaultSerialStopBits || 1, [
+                    1,
+                    2
+                ]);
+                form.serialParity = normalizeSerialParity(form.serialParity || store.settings.defaultSerialParity);
+                form.serialFlowControl = normalizeSerialFlowControl(
+                    form.serialFlowControl || store.settings.defaultSerialFlowControl
+                );
+                form.serialDtr = normalizeSerialBoolean(form.serialDtr, store.settings.defaultSerialDtr);
+                form.serialRts = normalizeSerialBoolean(form.serialRts, store.settings.defaultSerialRts);
+                loadSerialPorts();
             }
         }
     );
@@ -234,12 +436,26 @@
         const base = {
             id: form.id,
             name: String(form.name || '').trim(),
+            color: normalizeSessionColor(form.color),
             folderId: form.folderId || null,
             protocol: form.protocol,
             username: String(form.username || '').trim(),
             authType: form.authType,
             credentialSaveMode: isSsh.value ? normalizeCredentialSaveMode(form.credentialSaveMode) : 'prompt',
             privateKeyPath: String(form.privateKeyPath || '').trim(),
+            serialPath: String(form.serialPath || '').trim(),
+            serialBaudRate: normalizeSerialNumber(form.serialBaudRate, store.settings.defaultSerialBaudRate || 115200),
+            serialDataBits: normalizeSerialNumber(form.serialDataBits, store.settings.defaultSerialDataBits || 8, [
+                5,
+                6,
+                7,
+                8
+            ]),
+            serialStopBits: normalizeSerialNumber(form.serialStopBits, store.settings.defaultSerialStopBits || 1, [1, 2]),
+            serialParity: normalizeSerialParity(form.serialParity),
+            serialFlowControl: normalizeSerialFlowControl(form.serialFlowControl),
+            serialDtr: normalizeSerialBoolean(form.serialDtr, store.settings.defaultSerialDtr),
+            serialRts: normalizeSerialBoolean(form.serialRts, store.settings.defaultSerialRts),
             tags: Array.isArray(form.tags) ? [...form.tags] : [],
             description: String(form.description || '')
         };
@@ -268,7 +484,7 @@
         clearFieldErrors();
 
         const payload = buildPayload();
-        if (!isLocal.value && !payload.host) {
+        if (isNetwork.value && !payload.host) {
             setFieldError('host', '请填写主机地址');
             notifyError('请填写主机地址', '表单输入错误');
             return;
@@ -281,6 +497,11 @@
         if (isSsh.value && payload.authType === 'key' && !payload.privateKeyPath) {
             setFieldError('privateKeyPath', '请填写私钥路径');
             notifyError('请填写私钥路径', '表单输入错误');
+            return;
+        }
+        if (isSerial.value && !payload.serialPath) {
+            setFieldError('serialPath', '请选择串口设备');
+            notifyError('请选择串口设备', '表单输入错误');
             return;
         }
         submitting.value = true;
@@ -303,7 +524,7 @@
 <style scoped>
     .form-grid {
         display: grid;
-        grid-template-columns: 1fr 128px;
+        grid-template-columns: minmax(0, 1fr) 160px;
         gap: 14px;
         padding: 0 18px;
     }
@@ -313,7 +534,7 @@
         border-bottom: 1px solid var(--nx-border-softer);
     }
     .session-form-body {
-        height: min(252px, calc(100vh - 250px));
+        height: min(360px, calc(100vh - 250px));
         min-height: 220px;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -354,6 +575,82 @@
         color: var(--nx-text-dim);
         font-size: 12px;
         line-height: 1.45;
+    }
+    .serial-path-field {
+        gap: 8px;
+    }
+    .serial-field-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 24px;
+    }
+    .serial-refresh {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        min-width: 30px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid var(--nx-border);
+        border-radius: 5px;
+        background: var(--nx-control-muted);
+        color: var(--nx-text-dim);
+        cursor: pointer;
+    }
+    .serial-refresh:hover:not(:disabled) {
+        background: var(--nx-surface-2);
+        color: var(--nx-text);
+    }
+    .serial-check {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+    }
+    .serial-check input {
+        width: 16px;
+        height: 16px;
+    }
+    .session-color-field {
+        gap: 8px;
+    }
+    .session-color-options {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        min-height: 34px;
+    }
+    .session-color-option {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 34px;
+        min-width: 34px;
+        height: 34px;
+        padding: 0;
+        border: 1px solid var(--nx-border);
+        border-radius: 7px;
+        background: var(--nx-bg);
+        cursor: pointer;
+    }
+    .session-color-option span {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--session-color-swatch);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+    }
+    .session-color-option:hover {
+        border-color: var(--nx-text-dim);
+        background: var(--nx-surface-2);
+    }
+    .session-color-option.active {
+        border-color: var(--nx-accent);
+        box-shadow: 0 0 0 2px var(--nx-accent-border-soft);
     }
     input,
     select {
@@ -408,7 +705,7 @@
         opacity: 0.62;
     }
 
-    @media (max-width: 520px) {
+    @media (max-width: 620px) {
         .session-form-body {
             height: min(420px, calc(100vh - 230px));
         }

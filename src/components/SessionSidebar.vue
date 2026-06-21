@@ -157,6 +157,7 @@
             </template>
 
             <ScriptWorkbench v-else-if="activePanel === 'scripts'" />
+            <PortForwardPanel v-else-if="activePanel === 'forwards'" />
             <div v-else-if="activePanel === 'keychain'" class="security-panel">
                 <KeychainSection />
             </div>
@@ -351,6 +352,7 @@
         FolderTree,
         KeyRound,
         LocateFixed,
+        Network,
         Pencil,
         Play,
         Plus,
@@ -382,6 +384,7 @@
     import IconButton from './ui/IconButton.vue';
     import KeychainSection from './settings/KeychainSection.vue';
     import KnownHostsSection from './settings/KnownHostsSection.vue';
+    import PortForwardPanel from './PortForwardPanel.vue';
     import ScriptWorkbench from './ScriptWorkbench.vue';
     import SessionDialog from './SessionDialog.vue';
 
@@ -458,6 +461,7 @@
     const panels = [
         { id: 'sessions', label: '会话集', icon: FolderTree },
         { id: 'files', label: '文件', icon: Files },
+        { id: 'forwards', label: '转发', icon: Network },
         { id: 'scripts', label: '脚本', icon: FileCode },
         { id: 'keychain', label: 'Keychain', icon: KeyRound },
         { id: 'known-host', label: 'Known Host', icon: Fingerprint }
@@ -468,6 +472,10 @@
         if (activePanel.value === 'sessions')
             return `${store.sessionFolders.length} 文件夹 · ${store.sessions.length} 会话`;
         if (activePanel.value === 'scripts') return `${store.scripts.length} 脚本 · ${store.scriptTasks.length} 任务`;
+        if (activePanel.value === 'forwards') {
+            const activeCount = store.portForwards.filter(forward => forward.status === 'active').length;
+            return `${activeCount} 运行 · ${store.portForwards.length} 规则`;
+        }
         if (activePanel.value === 'keychain') return '~/.ssh keys';
         if (activePanel.value === 'known-host') return '~/.ssh/known_hosts';
         return fileSessionId.value ? remotePath.value : '未连接';

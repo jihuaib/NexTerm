@@ -14,6 +14,7 @@
                     :key="session.sessionId"
                     class="tab"
                     :class="{ active: session.sessionId === activeSessionId }"
+                    :style="tabStyle(session)"
                     draggable="true"
                     :title="tabTitle(session)"
                     @click="activateTab(session.sessionId)"
@@ -21,7 +22,7 @@
                     @dragend="onDragEnd"
                 >
                     <span class="dot" :class="session.status" />
-                    <span class="tab__title">{{ session.name }}</span>
+                    <span class="tab__title">{{ tabLabel(session) }}</span>
                     <span
                         class="tab__close"
                         title="关闭标签"
@@ -92,8 +93,8 @@
         activateGroupTab,
         closeGroupTab
     } from '../store';
-    import { isLocalSessionProtocol } from '../models/resources';
-    import { getLeafSessions } from '../layout';
+    import { getSessionColorOption, isLocalSessionProtocol, isSerialSessionProtocol } from '../models/resources';
+    import { collectSessions, getLeafSessions } from '../layout';
     import TerminalPane from './TerminalPane.vue';
 
     const props = defineProps({ node: { type: Object, required: true } });
@@ -101,6 +102,21 @@
     const groupDropActive = ref(false);
 
     const sessions = computed(() => getLeafSessions(props.node));
+    const duplicateSessionIndexes = computed(() => {
+        const groups = new Map();
+        for (const session of collectSessions(store.layout, [])) {
+            const key = session.profileId || session.sessionId;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(session);
+        }
+
+        const indexes = new Map();
+        groups.forEach(group => {
+            if (group.length <= 1) return;
+            group.forEach((session, index) => indexes.set(session.sessionId, index + 1));
+        });
+        return indexes;
+    });
     const activeSessionId = computed(() => {
         const active = sessions.value.find(s => s.sessionId === props.node.activeSessionId) || sessions.value[0];
         return active ? active.sessionId : null;
@@ -113,9 +129,22 @@
 
     function tabTitle(session) {
         if (isLocalSessionProtocol(session.protocol)) return `${session.name} - Local Shell`;
+        if (isSerialSessionProtocol(session.protocol)) return `${session.name} - serial://${session.serialPath || ''}`;
         if (session.protocol === 'ssh')
             return `${session.name} - ssh://${session.username ? `${session.username}@` : ''}${session.host}:${session.port}`;
         return `${session.name} - ${session.host}:${session.port}`;
+    }
+    function tabLabel(session) {
+        const duplicateIndex = duplicateSessionIndexes.value.get(session.sessionId);
+        return duplicateIndex ? `${duplicateIndex}. ${session.name}` : session.name;
+    }
+    function tabStyle(session) {
+        const color = getSessionColorOption(session.color);
+        return {
+            '--session-tab-bg': color.bg,
+            '--session-tab-active-bg': color.activeBg,
+            '--session-tab-border': color.border
+        };
     }
     function split(dir) {
         splitPaneEmpty(props.node.id, dir);
@@ -326,16 +355,16 @@
         min-width: 116px;
         height: 32px;
         padding: 0 7px 0 9px;
-        border: 1px solid transparent;
+        border: 1px solid var(--session-tab-border, transparent);
         border-bottom: none;
         border-radius: 7px 7px 0 0;
-        background: var(--nx-control-muted);
-        color: var(--nx-text-dim);
+        background: var(--session-tab-bg, var(--nx-control-muted));
+        color: var(--nx-text);
         cursor: grab;
     }
     .tab.active {
-        background: var(--nx-bg);
-        border-color: var(--nx-border);
+        background: var(--session-tab-active-bg, var(--nx-bg));
+        border-color: var(--session-tab-border, var(--nx-border));
         color: var(--nx-text);
     }
     .tab:active {

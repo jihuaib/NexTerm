@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('scriptApi', {
 contextBridge.exposeInMainWorld('terminalApi', {
     connect: options => ipcRenderer.invoke('terminal:connect', options),
     disconnect: sessionId => ipcRenderer.invoke('terminal:disconnect', sessionId),
+    listSerialPorts: () => ipcRenderer.invoke('terminal:serial-ports'),
     runScript: payload => ipcRenderer.invoke('terminal:script-run', payload),
     stopScript: payload => ipcRenderer.invoke('terminal:script-stop', payload),
     pauseScript: payload => ipcRenderer.invoke('terminal:script-pause', payload),
@@ -51,6 +52,12 @@ contextBridge.exposeInMainWorld('sftpApi', {
         Array.from(files || [])
             .map(file => file.path)
             .filter(Boolean)
+});
+
+contextBridge.exposeInMainWorld('portForwardApi', {
+    list: () => ipcRenderer.invoke('port-forward:list'),
+    start: payload => ipcRenderer.invoke('port-forward:start', payload),
+    stop: payload => ipcRenderer.invoke('port-forward:stop', payload)
 });
 
 contextBridge.exposeInMainWorld('updaterApi', {

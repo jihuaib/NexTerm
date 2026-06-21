@@ -81,11 +81,12 @@ class TerminalLogWriter {
 
     registerSession(options = {}, protocol = '') {
         if (!options.sessionId) return;
+        const host = options.host || options.serialPath || '';
         this.sessions.set(options.sessionId, {
             id: options.sessionId,
-            sessionName: options.name || options.host || protocol || 'session',
+            sessionName: options.name || host || protocol || 'session',
             protocol: protocol || options.protocol || '',
-            host: options.host || '',
+            host,
             user: options.username || '',
             startedAt: new Date(),
             lineBuffer: '',

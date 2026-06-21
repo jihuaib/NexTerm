@@ -1,8 +1,9 @@
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const remotePath = require('path').posix;
 const { Client } = require('ssh2');
-const { TERMINAL_STATUS, TERMINAL_EVT, SFTP_EVT } = require('../const/telnetConst');
+const { TERMINAL_STATUS, TERMINAL_EVT, SFTP_EVT, PORT_FORWARD_EVT } = require('../const/telnetConst');
 const { verifyKnownHost } = require('./knownHosts');
 const {
     pauseLocalScriptTask,
@@ -11,9 +12,84 @@ const {
     stopLocalScriptTask
 } = require('./scriptProcessRunner');
 const { normalizeTerminalOutput } = require('./scriptIoBridge');
+const { normalizeTerminalSize, sameTerminalSize } = require('./terminalSize');
 
 function normalizeText(value) {
     return String(value || '').trim();
+}
+
+function makeForwardId() {
+    return `pf-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function nowIso() {
+    return new Date().toISOString();
+}
+
+function normalizeForwardType(value) {
+    const type = normalizeText(value).toLowerCase();
+    if (type === 'local' || type === 'remote' || type === 'dynamic') return type;
+    throw new Error('转发类型无效');
+}
+
+function normalizePort(value, label, allowZero = false) {
+    const port = Number(value);
+    const min = allowZero ? 0 : 1;
+    if (!Number.isInteger(port) || port < min || port > 65535) throw new Error(`${label}必须是 ${min}-65535`);
+    return port;
+}
+
+function normalizeForwardRule(payload = {}) {
+    const type = normalizeForwardType(payload.type);
+    const bindHost = normalizeText(payload.bindHost || payload.localHost) || '127.0.0.1';
+    const bindPort = normalizePort(payload.bindPort || payload.localPort, '监听端口', true);
+    const targetHost = type === 'dynamic' ? '' : normalizeText(payload.targetHost || payload.remoteHost);
+    const targetPort =
+        type === 'dynamic' ? null : normalizePort(payload.targetPort || payload.remotePort, '目标端口', false);
+    if (type !== 'dynamic' && !targetHost) throw new Error('目标地址不能为空');
+    return {
+        id: normalizeText(payload.id) || makeForwardId(),
+        sessionId: normalizeText(payload.sessionId),
+        type,
+        name: normalizeText(payload.name) || '',
+        bindHost,
+        bindPort,
+        targetHost,
+        targetPort
+    };
+}
+
+function publicForward(state = {}, patch = {}) {
+    return {
+        id: state.id,
+        sessionId: state.sessionId,
+        type: state.type,
+        name: state.name || '',
+        bindHost: state.bindHost,
+        bindPort: state.bindPort,
+        targetHost: state.targetHost || '',
+        targetPort: state.targetPort || null,
+        status: state.status || 'stopped',
+        startedAt: state.startedAt || '',
+        msg: state.msg || '',
+        ...patch
+    };
+}
+
+function wireDuplex(left, right) {
+    let closed = false;
+    const close = () => {
+        if (closed) return;
+        closed = true;
+        left.destroy?.();
+        right.destroy?.();
+    };
+    left.on('error', close);
+    right.on('error', close);
+    left.on('close', close);
+    right.on('close', close);
+    left.pipe(right);
+    right.pipe(left);
 }
 
 function toB64(buffer) {
@@ -326,6 +402,7 @@ class SshManager {
         this.emit = typeof emit === 'function' ? emit : () => {};
         this.conns = new Map();
         this.scriptTasks = new Map();
+        this.forwardRules = new Map();
     }
 
     connect(options = {}) {
@@ -374,6 +451,10 @@ class SshManager {
             finish(prompts.map(() => password));
         });
 
+        conn.on('tcp connection', (details, accept, reject) => {
+            this.handleRemoteForwardConnection(sessionId, details, accept, reject);
+        });
+
         conn.on('ready', () => {
             this.ensureSftp(sessionId)
                 .then(sftp => {
@@ -419,6 +500,7 @@ class SshManager {
                         this.emit(TERMINAL_EVT.DATA, { sessionId, b64: toB64(data) });
                     });
                     stream.on('close', () => {
+                        this.stopPortForwardsForSession(sessionId, 'SSH Shell 已关闭');
                         this.conns.delete(sessionId);
                         emitTerminalStatus(TERMINAL_STATUS.CLOSED, ctx.lastError || '远程 Shell 已关闭');
                     });
@@ -430,6 +512,7 @@ class SshManager {
             emitTerminalStatus(TERMINAL_STATUS.ERROR, formatConnectionError(err, options));
         });
         conn.on('close', () => {
+            this.stopPortForwardsForSession(sessionId, ctx.lastError || 'SSH 连接已关闭');
             this.conns.delete(sessionId);
             if (ctx.lastError) emitTerminalStatus(TERMINAL_STATUS.ERROR, ctx.lastError);
             else emitTerminalStatus(TERMINAL_STATUS.CLOSED, 'SSH 连接已关闭');
@@ -666,8 +749,10 @@ class SshManager {
     resize(sessionId, cols, rows) {
         const ctx = this.conns.get(sessionId);
         if (!ctx) return;
-        ctx.cols = Number(cols) || ctx.cols;
-        ctx.rows = Number(rows) || ctx.rows;
+        const nextSize = normalizeTerminalSize(cols, rows, ctx);
+        if (sameTerminalSize(ctx, nextSize)) return;
+        ctx.cols = nextSize.cols;
+        ctx.rows = nextSize.rows;
         try {
             ctx.stream?.setWindow?.(ctx.rows, ctx.cols, ctx.rows * 20, ctx.cols * 10);
         } catch (_err) {
@@ -779,6 +864,277 @@ class SshManager {
         });
     }
 
+    emitForwardUpdate(state, patch = {}) {
+        this.emit(PORT_FORWARD_EVT.UPDATE, publicForward(state, patch));
+    }
+
+    listPortForwards() {
+        return [...this.forwardRules.values()].map(state => publicForward(state));
+    }
+
+    async startPortForward(payload = {}) {
+        let rule;
+        try {
+            rule = normalizeForwardRule(payload);
+        } catch (err) {
+            return { ok: false, msg: err.message };
+        }
+
+        if (!rule.sessionId) return { ok: false, msg: '请选择 SSH 会话' };
+        const ctx = this.conns.get(rule.sessionId);
+        if (!ctx?.conn) return { ok: false, msg: 'SSH 会话不存在或未连接' };
+        if (this.forwardRules.has(rule.id)) return { ok: false, msg: '端口转发规则已在运行' };
+
+        try {
+            if (rule.type === 'remote') return await this.startRemotePortForward(ctx, rule);
+            return await this.startLocalPortForward(ctx, rule);
+        } catch (err) {
+            return { ok: false, msg: err.message };
+        }
+    }
+
+    async startLocalPortForward(ctx, rule) {
+        const server = net.createServer(socket => {
+            const state = this.forwardRules.get(rule.id);
+            if (!state || state.status !== 'active') {
+                socket.destroy();
+                return;
+            }
+            state.sockets.add(socket);
+            socket.on('close', () => state.sockets.delete(socket));
+            if (state.type === 'dynamic') this.handleDynamicForwardSocket(state, socket);
+            else this.openForwardOut(state, socket, state.targetHost, state.targetPort);
+        });
+
+        const state = {
+            ...rule,
+            ctx,
+            server,
+            sockets: new Set(),
+            status: 'starting',
+            startedAt: nowIso(),
+            msg: ''
+        };
+
+        server.on('error', err => {
+            const current = this.forwardRules.get(rule.id);
+            if (!current) return;
+            current.status = 'error';
+            current.msg = err.message;
+            this.emitForwardUpdate(current);
+        });
+
+        await new Promise((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(rule.bindPort, rule.bindHost, () => {
+                server.off('error', reject);
+                resolve();
+            });
+        });
+
+        const address = server.address();
+        if (address && typeof address === 'object') state.bindPort = Number(address.port) || state.bindPort;
+        state.status = 'active';
+        this.forwardRules.set(state.id, state);
+        this.emitForwardUpdate(state);
+        return { ok: true, data: publicForward(state) };
+    }
+
+    async startRemotePortForward(ctx, rule) {
+        const state = {
+            ...rule,
+            ctx,
+            sockets: new Set(),
+            status: 'starting',
+            startedAt: nowIso(),
+            msg: ''
+        };
+
+        const actualPort = await new Promise((resolve, reject) => {
+            ctx.conn.forwardIn(rule.bindHost, rule.bindPort, (err, port) => {
+                if (err) reject(err);
+                else resolve(port);
+            });
+        });
+
+        state.bindPort = Number(actualPort) || state.bindPort;
+        state.status = 'active';
+        this.forwardRules.set(state.id, state);
+        this.emitForwardUpdate(state);
+        return { ok: true, data: publicForward(state) };
+    }
+
+    openForwardOut(state, socket, host, port) {
+        const srcHost = socket.remoteAddress || '127.0.0.1';
+        const srcPort = Number(socket.remotePort) || 0;
+        state.ctx.conn.forwardOut(srcHost, srcPort, host, port, (err, stream) => {
+            if (err) {
+                state.msg = err.message;
+                this.emitForwardUpdate(state, { status: 'active', msg: err.message });
+                socket.destroy();
+                return;
+            }
+            wireDuplex(socket, stream);
+        });
+    }
+
+    handleDynamicForwardSocket(state, socket) {
+        let buffer = Buffer.alloc(0);
+        let stage = 'greeting';
+
+        const fail = (code = 1) => {
+            try {
+                socket.write(Buffer.from([0x05, code, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
+            } catch (_err) {
+                /* socket may already be closed */
+            }
+            socket.destroy();
+        };
+
+        const onData = chunk => {
+            buffer = Buffer.concat([buffer, chunk]);
+            if (stage === 'greeting') {
+                if (buffer.length < 2) return;
+                const methodsLength = buffer[1];
+                const frameLength = 2 + methodsLength;
+                if (buffer.length < frameLength) return;
+                if (buffer[0] !== 0x05) {
+                    fail(1);
+                    return;
+                }
+                socket.write(Buffer.from([0x05, 0x00]));
+                buffer = buffer.slice(frameLength);
+                stage = 'request';
+            }
+
+            if (stage !== 'request') return;
+            if (buffer.length < 5) return;
+            if (buffer[0] !== 0x05 || buffer[1] !== 0x01) {
+                fail(7);
+                return;
+            }
+
+            const atyp = buffer[3];
+            let host = '';
+            let portOffset = 0;
+            if (atyp === 0x01) {
+                if (buffer.length < 10) return;
+                host = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
+                portOffset = 8;
+            } else if (atyp === 0x03) {
+                const length = buffer[4];
+                if (buffer.length < 5 + length + 2) return;
+                host = buffer.slice(5, 5 + length).toString('utf8');
+                portOffset = 5 + length;
+            } else if (atyp === 0x04) {
+                if (buffer.length < 22) return;
+                const parts = [];
+                for (let index = 4; index < 20; index += 2) parts.push(buffer.readUInt16BE(index).toString(16));
+                host = parts.join(':');
+                portOffset = 20;
+            } else {
+                fail(8);
+                return;
+            }
+
+            const port = buffer.readUInt16BE(portOffset);
+            const rest = buffer.slice(portOffset + 2);
+            socket.off('data', onData);
+            state.ctx.conn.forwardOut(socket.remoteAddress || '127.0.0.1', Number(socket.remotePort) || 0, host, port, (err, stream) => {
+                if (err) {
+                    state.msg = err.message;
+                    this.emitForwardUpdate(state, { status: 'active', msg: err.message });
+                    fail(5);
+                    return;
+                }
+                socket.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
+                if (rest.length) stream.write(rest);
+                wireDuplex(socket, stream);
+            });
+        };
+
+        socket.on('data', onData);
+    }
+
+    handleRemoteForwardConnection(sessionId, details = {}, accept, reject) {
+        const destPort = Number(details.destPort || details.serverPort || details.port) || 0;
+        const state = [...this.forwardRules.values()].find(
+            item => item.sessionId === sessionId && item.type === 'remote' && item.status === 'active' && item.bindPort === destPort
+        );
+        if (!state) {
+            reject?.();
+            return;
+        }
+
+        let sshStream;
+        try {
+            sshStream = accept();
+        } catch (_err) {
+            reject?.();
+            return;
+        }
+
+        const target = net.connect({ host: state.targetHost, port: state.targetPort });
+        state.sockets.add(sshStream);
+        state.sockets.add(target);
+        const cleanup = () => {
+            state.sockets.delete(sshStream);
+            state.sockets.delete(target);
+        };
+        sshStream.on('close', cleanup);
+        target.on('close', cleanup);
+        target.on('connect', () => wireDuplex(sshStream, target));
+        target.on('error', err => {
+            state.msg = err.message;
+            this.emitForwardUpdate(state, { status: 'active', msg: err.message });
+            sshStream.destroy?.();
+        });
+    }
+
+    async stopPortForward(id, msg = '端口转发已停止') {
+        const state = this.forwardRules.get(id);
+        if (!state) return { ok: false, msg: '端口转发不存在' };
+        this.forwardRules.delete(id);
+
+        for (const socket of [...(state.sockets || [])]) {
+            try {
+                socket.destroy?.();
+            } catch (_err) {
+                /* socket may already be closed */
+            }
+        }
+        state.sockets?.clear?.();
+
+        if (state.type === 'remote') {
+            await new Promise(resolve => {
+                try {
+                    state.ctx.conn.unforwardIn(state.bindHost, state.bindPort, () => resolve());
+                } catch (_err) {
+                    resolve();
+                }
+            });
+        } else if (state.server) {
+            await new Promise(resolve => {
+                try {
+                    state.server.close(() => resolve());
+                } catch (_err) {
+                    resolve();
+                }
+            });
+        }
+
+        state.status = 'stopped';
+        state.msg = msg;
+        this.emitForwardUpdate(state);
+        return { ok: true, data: publicForward(state) };
+    }
+
+    stopPortForwardsForSession(sessionId, msg = 'SSH 会话已断开') {
+        for (const state of [...this.forwardRules.values()]) {
+            if (state.sessionId === sessionId) this.stopPortForward(state.id, msg);
+        }
+    }
+
     runScript(sessionId, payload = {}) {
         const ctx = this.conns.get(sessionId);
         if (!ctx?.conn) return Promise.resolve({ ok: false, msg: 'SSH 会话不存在' });
@@ -819,6 +1175,7 @@ class SshManager {
             this.stopScript(taskId);
             this.scriptTasks.delete(taskId);
         }
+        this.stopPortForwardsForSession(sessionId, 'SSH 会话已断开');
         try {
             ctx.stream?.end?.();
             ctx.conn.end();

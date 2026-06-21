@@ -1,6 +1,8 @@
 const { test, expect, _electron: electron } = require('@playwright/test');
 const { generateKeyPairSync } = require('crypto');
+const dgram = require('dgram');
 const fs = require('fs/promises');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { startTestSshServer } = require('./helpers/sshServer.cjs');
@@ -10,6 +12,10 @@ const ROOT = path.resolve(__dirname, '..');
 function localShellPath() {
     if (process.platform === 'win32') return process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
     return '/bin/sh';
+}
+
+function mockSerialPath() {
+    return process.platform === 'win32' ? 'COM99' : '/dev/tty.NEXTERM-E2E';
 }
 
 async function pathExists(target) {
@@ -29,6 +35,167 @@ async function writeTestPrivateKey(homeDir) {
     const keyPath = path.join(sshDir, 'id_ed25519');
     await fs.writeFile(keyPath, privateKeyText, { mode: 0o600 });
     return keyPath;
+}
+
+function listenTcp(server, host = '127.0.0.1', port = 0) {
+    return new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, host, () => {
+            server.off('error', reject);
+            resolve(server.address().port);
+        });
+    });
+}
+
+async function getFreeTcpPort() {
+    const server = net.createServer();
+    const port = await listenTcp(server);
+    await new Promise(resolve => server.close(resolve));
+    return port;
+}
+
+async function getFreeUdpPort() {
+    const server = dgram.createSocket('udp4');
+    const port = await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.bind(0, '127.0.0.1', () => {
+            server.off('error', reject);
+            resolve(server.address().port);
+        });
+    });
+    await new Promise(resolve => server.close(resolve));
+    return port;
+}
+
+async function startEchoServer() {
+    const server = net.createServer(socket => {
+        socket.on('data', data => {
+            socket.write(Buffer.from(`echo:${data.toString('utf8')}`));
+        });
+    });
+    const port = await listenTcp(server);
+    return {
+        port,
+        close: () => new Promise(resolve => server.close(resolve))
+    };
+}
+
+async function startUdpEchoServer() {
+    const server = dgram.createSocket('udp4');
+    server.on('message', (message, rinfo) => {
+        server.send(Buffer.from(`echo:${message.toString('utf8')}`), rinfo.port, rinfo.address);
+    });
+    const port = await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.bind(0, '127.0.0.1', () => {
+            server.off('error', reject);
+            resolve(server.address().port);
+        });
+    });
+    return {
+        port,
+        close: () =>
+            new Promise(resolve => {
+                try {
+                    server.close(() => resolve());
+                } catch (_err) {
+                    resolve();
+                }
+            })
+    };
+}
+
+function tcpRoundTrip(port, payload) {
+    return new Promise((resolve, reject) => {
+        const socket = net.connect({ host: '127.0.0.1', port }, () => socket.write(payload));
+        const timer = setTimeout(() => {
+            socket.destroy();
+            reject(new Error('TCP round trip timed out'));
+        }, 5000);
+        socket.once('data', data => {
+            clearTimeout(timer);
+            resolve(data.toString('utf8'));
+            socket.end();
+        });
+        socket.once('error', err => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
+}
+
+function udpRoundTrip(port, payload) {
+    return new Promise((resolve, reject) => {
+        const socket = dgram.createSocket('udp4');
+        const timer = setTimeout(() => {
+            socket.close();
+            reject(new Error('UDP round trip timed out'));
+        }, 5000);
+        socket.once('message', data => {
+            clearTimeout(timer);
+            resolve(data.toString('utf8'));
+            socket.close();
+        });
+        socket.once('error', err => {
+            clearTimeout(timer);
+            socket.close();
+            reject(err);
+        });
+        socket.send(Buffer.from(payload), port, '127.0.0.1');
+    });
+}
+
+function socks5RoundTrip(socksPort, targetPort, payload) {
+    return new Promise((resolve, reject) => {
+        const socket = net.connect({ host: '127.0.0.1', port: socksPort });
+        const timer = setTimeout(() => {
+            socket.destroy();
+            reject(new Error('SOCKS5 round trip timed out'));
+        }, 5000);
+        let stage = 'greeting';
+        socket.on('connect', () => {
+            socket.write(Buffer.from([0x05, 0x01, 0x00]));
+        });
+        socket.on('data', data => {
+            if (stage === 'greeting') {
+                if (data[0] !== 0x05 || data[1] !== 0x00) {
+                    clearTimeout(timer);
+                    reject(new Error('SOCKS5 greeting rejected'));
+                    socket.destroy();
+                    return;
+                }
+                stage = 'connect';
+                const host = Buffer.from([127, 0, 0, 1]);
+                const request = Buffer.alloc(10);
+                request[0] = 0x05;
+                request[1] = 0x01;
+                request[2] = 0x00;
+                request[3] = 0x01;
+                host.copy(request, 4);
+                request.writeUInt16BE(targetPort, 8);
+                socket.write(request);
+                return;
+            }
+            if (stage === 'connect') {
+                if (data[1] !== 0x00) {
+                    clearTimeout(timer);
+                    reject(new Error(`SOCKS5 connect failed: ${data[1]}`));
+                    socket.destroy();
+                    return;
+                }
+                stage = 'payload';
+                socket.write(payload);
+                return;
+            }
+            clearTimeout(timer);
+            resolve(data.toString('utf8'));
+            socket.end();
+        });
+        socket.once('error', err => {
+            clearTimeout(timer);
+            reject(err);
+        });
+    });
 }
 
 async function closeElectronApp(electronApp) {
@@ -70,6 +237,8 @@ test.beforeEach(async ({}, testInfo) => {
             NODE_ENV: 'test',
             NEXTERM_E2E: '1',
             NEXTERM_DISABLE_DEVTOOLS: '1',
+            NEXTERM_SERIAL_MOCK: '1',
+            NEXTERM_SERIAL_MOCK_PORTS: JSON.stringify([mockSerialPath()]),
             NEXTERM_USER_DATA_DIR: userDataDir,
             HOME: userDataDir,
             USERPROFILE: userDataDir
@@ -188,7 +357,13 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await chooseSettingsCategory(page, '连接');
     await expect(settingsHeading(page, '新建会话')).toBeVisible();
     await expect(settingsHeading(page, 'Local Shell')).toBeVisible();
+    await expect(settingsHeading(page, 'Serial')).toBeVisible();
     await expect(settingsHeading(page, '重连')).toBeVisible();
+    await expect(settingsHeading(page, '端口转发机制')).toBeVisible();
+    await expect(settingsPanel(page).locator('.forward-flow__title').filter({ hasText: 'Direct' })).toBeVisible();
+    await expect(settingsPanel(page).locator('.forward-flow__title').filter({ hasText: 'SSH Local' })).toBeVisible();
+    await expect(settingsPanel(page).locator('.forward-flow__title').filter({ hasText: 'SSH Remote' })).toBeVisible();
+    await expect(settingsPanel(page).locator('.forward-flow__title').filter({ hasText: 'SOCKS5' })).toBeVisible();
     await expect(settingsHeading(page, 'SSH 安全')).toBeVisible();
     await selectRowValue(page, '默认协议', 'local');
     await fillRowInput(page, '默认 Telnet 端口', '2323');
@@ -224,7 +399,9 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await toggleRow(page, '自动下载更新');
 
     await chooseSettingsCategory(page, '关于');
-    await expect(page.getByText('SSH、Telnet、Local Shell、SFTP 文件面板与终端日志')).toBeVisible();
+    await expect(
+        page.getByText('SSH、Telnet、Serial、Local Shell、SFTP 文件面板、TCP / UDP / SSH 端口转发与终端日志')
+    ).toBeVisible();
 
     await settingsPanel(page).locator('.content__head .close').click();
     await expect(page.locator('.overlay')).toHaveCount(0);
@@ -276,10 +453,95 @@ test('session dialog validates protocol-specific fields in place', async ({}, te
     await sessionDialog.getByRole('button', { name: '保存' }).click();
     await expect(sessionDialog.getByLabel('私钥路径')).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByRole('alert').filter({ hasText: '请填写私钥路径' })).toBeVisible();
+
+    await sessionDialog.getByRole('tab', { name: 'Serial' }).click();
+    const serialPathInput = sessionDialog.locator('.serial-path-field input');
+    await expect(sessionDialog.getByTitle('刷新串口列表')).toBeVisible();
+    await expect(serialPathInput).toHaveValue(mockSerialPath());
+    await serialPathInput.fill('');
+    await sessionDialog.getByRole('button', { name: '保存' }).click();
+    await expect(serialPathInput).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByRole('alert').filter({ hasText: '请选择串口设备' })).toBeVisible();
+});
+
+test('serial session connects and scripts can drive the port from the UI', async ({}, testInfo) => {
+    const { page, userDataDir } = testInfo.e2e;
+    const serialPath = mockSerialPath();
+
+    await page.getByRole('button', { name: '新建会话' }).click();
+    const sessionDialog = page.locator('.dialog').filter({ hasText: '新建会话' });
+    await expect(sessionDialog).toBeVisible();
+    await sessionDialog.getByRole('tab', { name: 'Serial' }).click();
+    const serialSelect = sessionDialog.locator('.serial-path-field select');
+    const serialInput = sessionDialog.locator('.serial-path-field input');
+    await expect(sessionDialog.getByTitle('刷新串口列表')).toBeVisible();
+    await expect(serialSelect).toContainText(serialPath);
+    await serialSelect.selectOption(serialPath);
+    await expect(serialInput).toHaveValue(serialPath);
+
+    await sessionDialog.getByLabel('名称').fill('E2E Serial');
+    await sessionDialog.getByLabel('波特率').fill('57600');
+    await sessionDialog.getByLabel('数据位').selectOption('7');
+    await sessionDialog.getByLabel('停止位').selectOption('2');
+    await sessionDialog.getByLabel('校验').selectOption('even');
+    await sessionDialog.getByLabel('流控').selectOption('software');
+    await sessionDialog.getByRole('button', { name: '保存' }).click();
+    await expect(page.locator('.resource-row', { hasText: 'E2E Serial' })).toBeVisible();
+
+    const sessionDataPath = path.join(userDataDir, 'data', 'sessions.json');
+    await expect.poll(() => pathExists(sessionDataPath)).toBe(true);
+    const saved = JSON.parse(await fs.readFile(sessionDataPath, 'utf8'));
+    const savedSerialSession = saved.sessions.find(session => session.name === 'E2E Serial');
+    expect(savedSerialSession.protocol).toBe('serial');
+    expect(savedSerialSession.serialPath).toBe(serialPath);
+    expect(savedSerialSession.serialBaudRate).toBe(57600);
+    expect(savedSerialSession.serialDataBits).toBe(7);
+    expect(savedSerialSession.serialStopBits).toBe(2);
+    expect(savedSerialSession.serialParity).toBe('even');
+    expect(savedSerialSession.serialFlowControl).toBe('software');
+    expect(savedSerialSession.color).toBe('blue');
+
+    await page.locator('.resource-row', { hasText: 'E2E Serial' }).dblclick();
+    await expect(page.locator('.tab', { hasText: 'E2E Serial' })).toBeVisible();
+    await expect(page.locator('.tab', { hasText: 'E2E Serial' }).locator('.dot.connected')).toBeVisible({
+        timeout: 15_000
+    });
+
+    await page.locator('.xterm').click();
+    await page.keyboard.type('__NEXTERM_SERIAL_ECHO__');
+    await expect(page.locator('.xterm')).toContainText('__NEXTERM_SERIAL_ECHO__', { timeout: 10_000 });
+
+    await page.getByRole('button', { name: '脚本', exact: true }).click();
+    await page.getByRole('button', { name: '新建脚本' }).click();
+    const scriptDialog = page.locator('.dialog').filter({ hasText: '新建脚本' });
+    await expect(scriptDialog).toBeVisible();
+    await scriptDialog.getByLabel('名称').fill('E2E Serial Script');
+    await scriptDialog.getByLabel('语言').selectOption('javascript');
+    await scriptDialog
+        .getByLabel('脚本', { exact: true })
+        .fill(
+            "await term.send('__NEXTERM_SERIAL_SCRIPT__\\n');\n" +
+                "const out = await term.expect('__NEXTERM_SERIAL_SCRIPT__', 5000);\n" +
+                "term.print(out.includes('__NEXTERM_SERIAL_SCRIPT__') ? '__NEXTERM_SERIAL_SCRIPT_OK__\\n' : '__NEXTERM_SERIAL_SCRIPT_MISS__\\n');"
+        );
+    await scriptDialog.getByRole('button', { name: '保存' }).click();
+    const serialScriptRow = page.locator('.script-row').filter({ hasText: 'E2E Serial Script' });
+    await expect(serialScriptRow).toBeVisible();
+    await serialScriptRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '执行', exact: true }).click();
+    const runDialog = page.locator('.dialog').filter({ hasText: '执行脚本' });
+    await expect(runDialog).toBeVisible();
+    await expect(runDialog.getByLabel('目标窗口')).not.toHaveValue('');
+    await runDialog.getByRole('button', { name: '执行' }).click();
+    await expect(page.locator('.xterm')).toContainText('__NEXTERM_SERIAL_SCRIPT_OK__', { timeout: 10_000 });
+    const serialScriptTasks = page.locator('.task-item').filter({ hasText: 'E2E Serial Script' });
+    await expect(serialScriptTasks).toHaveCount(1);
+    await expect(serialScriptTasks.first()).toContainText('退出码 0', { timeout: 10_000 });
 });
 
 test('session tree, local shell tab, split pane, and file panel work from the UI', async ({}, testInfo) => {
     const { page, userDataDir, shellCwd } = testInfo.e2e;
+    const sessionDataPath = path.join(userDataDir, 'data', 'sessions.json');
 
     await page.getByRole('button', { name: '新建文件夹' }).click();
     const folderDialog = page.locator('.dialog').filter({ hasText: '新建文件夹' });
@@ -301,14 +563,19 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await expect(sessionDialog).toBeVisible();
     await sessionDialog.getByRole('tab', { name: 'Local Shell' }).click();
     await sessionDialog.getByLabel('名称').fill('E2E Local');
+    await sessionDialog.getByRole('button', { name: '绿色' }).click();
     await sessionDialog.getByLabel('文件夹').selectOption({ label: 'E2E Folder / E2E Child' });
     await sessionDialog.getByLabel('Shell').fill(localShellPath());
     await sessionDialog.getByLabel('工作目录').fill(shellCwd);
     await sessionDialog.getByRole('button', { name: '保存' }).click();
     await expect(page.locator('.resource-row', { hasText: 'E2E Local' })).toBeVisible();
+    await expect.poll(() => pathExists(sessionDataPath)).toBe(true);
+    const savedWithLocal = JSON.parse(await fs.readFile(sessionDataPath, 'utf8'));
+    expect(savedWithLocal.sessions.find(session => session.name === 'E2E Local').color).toBe('green');
 
     await page.locator('.resource-row', { hasText: 'E2E Local' }).dblclick();
     await expect(page.locator('.tab', { hasText: 'E2E Local' })).toBeVisible();
+    await expect(page.locator('.tab', { hasText: 'E2E Local' })).toHaveAttribute('style', /rgba\(16, 185, 129/);
     await expect(page.locator('.tab', { hasText: 'E2E Local' }).locator('.dot.connected')).toBeVisible({
         timeout: 15_000
     });
@@ -326,9 +593,11 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await page.keyboard.press('Escape');
     await expect(page.locator('.search-panel')).toHaveCount(0);
 
-    await testInfo.e2e.electronApp.evaluate(({ clipboard }) =>
-        clipboard.writeText('n=PASTE__; printf "__NEXTERM_RIGHT_CLICK_%s\\n" "$n"\n')
-    );
+    const pasteCommand =
+        process.platform === 'win32'
+            ? 'echo __NEXTERM_RIGHT_CLICK_PASTE__\r\n'
+            : 'printf "__NEXTERM_RIGHT_CLICK_PASTE__\\n"\n';
+    await testInfo.e2e.electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), pasteCommand);
     await page.locator('.xterm').click({ button: 'right' });
     await expect(page.locator('.xterm')).toContainText('__NEXTERM_RIGHT_CLICK_PASTE__', { timeout: 10_000 });
 
@@ -342,6 +611,8 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await page.locator('.resource-row', { hasText: 'E2E Local' }).dblclick();
     const localTabs = page.locator('.tab', { hasText: 'E2E Local' });
     await expect(localTabs).toHaveCount(2);
+    await expect(localTabs.nth(0).locator('.tab__title')).toHaveText('1. E2E Local');
+    await expect(localTabs.nth(1).locator('.tab__title')).toHaveText('2. E2E Local');
     await expect(localTabs.nth(1).locator('.dot.connected')).toBeVisible({
         timeout: 15_000
     });
@@ -465,7 +736,6 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await expect(page.locator('.resource-row', { hasText: 'E2E Child' })).toHaveCount(0);
     await expect(page.locator('.resource-row', { hasText: 'E2E Local' })).toHaveCount(0);
 
-    const sessionDataPath = path.join(userDataDir, 'data', 'sessions.json');
     expect(await pathExists(sessionDataPath)).toBe(true);
     const saved = JSON.parse(await fs.readFile(sessionDataPath, 'utf8'));
     expect(saved.sessions).toEqual([]);
@@ -512,6 +782,130 @@ test('ssh session connects and sftp directory renders from the UI', async ({}, t
         timeout: 15_000
     });
     await expect(page.locator('.xterm')).toContainText('mock ssh ready', { timeout: 10_000 });
+
+    const echoServer = await startEchoServer();
+    testInfo.e2e.cleanups.push(() => echoServer.close());
+    const udpEchoServer = await startUdpEchoServer();
+    testInfo.e2e.cleanups.push(() => udpEchoServer.close());
+    const directForwardPort = await getFreeTcpPort();
+    const directUdpForwardPort = await getFreeUdpPort();
+    const localForwardPort = await getFreeTcpPort();
+    const remoteForwardPort = await getFreeTcpPort();
+    const socksForwardPort = await getFreeTcpPort();
+
+    await page.getByRole('button', { name: '转发' }).click();
+    const forwardPanel = page.locator('.forward-panel');
+    await expect(forwardPanel.getByLabel('SSH 会话')).toHaveCount(0);
+    await forwardPanel.getByLabel('模式').selectOption('direct');
+    await forwardPanel.getByLabel('名称').fill('E2E Direct Forward');
+    await forwardPanel.getByLabel('监听地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('监听端口').fill(String(directForwardPort));
+    await forwardPanel.getByLabel('目标地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('目标端口').fill(String(echoServer.port));
+    await forwardPanel.locator('.forward-form').getByRole('button', { name: '启动转发' }).click();
+    const directForwardRow = forwardPanel.locator('.forward-item').filter({ hasText: `127.0.0.1:${directForwardPort}` });
+    await expect(directForwardRow).toContainText('运行中');
+    await expect(directForwardRow).toContainText('不使用 SSH');
+    await expect
+        .poll(async () => {
+            try {
+                return await tcpRoundTrip(directForwardPort, '__NEXTERM_FORWARD_DIRECT__');
+            } catch (_err) {
+                return '';
+            }
+        })
+        .toContain('echo:__NEXTERM_FORWARD_DIRECT__');
+
+    await forwardPanel.getByLabel('模式').selectOption('direct');
+    await forwardPanel.getByLabel('协议').selectOption('udp');
+    await forwardPanel.getByLabel('名称').fill('E2E Direct UDP Forward');
+    await forwardPanel.getByLabel('监听地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('监听端口').fill(String(directUdpForwardPort));
+    await forwardPanel.getByLabel('目标地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('目标端口').fill(String(udpEchoServer.port));
+    await forwardPanel.locator('.forward-form').getByRole('button', { name: '启动转发' }).click();
+    const directUdpForwardRow = forwardPanel
+        .locator('.forward-item')
+        .filter({ hasText: `127.0.0.1:${directUdpForwardPort}` });
+    await expect(directUdpForwardRow).toContainText('运行中');
+    await expect(directUdpForwardRow).toContainText('UDP');
+    await expect
+        .poll(async () => {
+            try {
+                return await udpRoundTrip(directUdpForwardPort, '__NEXTERM_FORWARD_DIRECT_UDP__');
+            } catch (_err) {
+                return '';
+            }
+        })
+        .toContain('echo:__NEXTERM_FORWARD_DIRECT_UDP__');
+
+    await forwardPanel.getByLabel('模式').selectOption('local');
+    await expect(forwardPanel.getByLabel('SSH 会话')).not.toHaveValue('');
+    await forwardPanel.getByLabel('名称').fill('E2E Local Forward');
+    await forwardPanel.getByLabel('监听地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('监听端口').fill(String(localForwardPort));
+    await forwardPanel.getByLabel('目标地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('目标端口').fill(String(echoServer.port));
+    await forwardPanel.locator('.forward-form').getByRole('button', { name: '启动转发' }).click();
+    const localForwardRow = forwardPanel.locator('.forward-item').filter({ hasText: `127.0.0.1:${localForwardPort}` });
+    await expect(localForwardRow).toContainText('运行中');
+    await expect
+        .poll(async () => {
+            try {
+                return await tcpRoundTrip(localForwardPort, '__NEXTERM_FORWARD_LOCAL__');
+            } catch (_err) {
+                return '';
+            }
+        })
+        .toContain('echo:__NEXTERM_FORWARD_LOCAL__');
+
+    await forwardPanel.getByLabel('模式').selectOption('remote');
+    await forwardPanel.getByLabel('名称').fill('E2E Remote Forward');
+    await forwardPanel.getByLabel('监听地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('监听端口').fill(String(remoteForwardPort));
+    await forwardPanel.getByLabel('目标地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('目标端口').fill(String(echoServer.port));
+    await forwardPanel.locator('.forward-form').getByRole('button', { name: '启动转发' }).click();
+    const remoteForwardRow = forwardPanel.locator('.forward-item').filter({ hasText: `127.0.0.1:${remoteForwardPort}` });
+    await expect(remoteForwardRow).toContainText('运行中');
+    await expect
+        .poll(async () => {
+            try {
+                return await tcpRoundTrip(remoteForwardPort, '__NEXTERM_FORWARD_REMOTE__');
+            } catch (_err) {
+                return '';
+            }
+        })
+        .toContain('echo:__NEXTERM_FORWARD_REMOTE__');
+
+    await forwardPanel.getByLabel('模式').selectOption('dynamic');
+    await forwardPanel.getByLabel('名称').fill('E2E SOCKS Forward');
+    await forwardPanel.getByLabel('监听地址').fill('127.0.0.1');
+    await forwardPanel.getByLabel('监听端口').fill(String(socksForwardPort));
+    await forwardPanel.locator('.forward-form').getByRole('button', { name: '启动转发' }).click();
+    const socksForwardRow = forwardPanel.locator('.forward-item').filter({ hasText: `127.0.0.1:${socksForwardPort}` });
+    await expect(socksForwardRow).toContainText('运行中');
+    await expect
+        .poll(async () => {
+            try {
+                return await socks5RoundTrip(socksForwardPort, echoServer.port, '__NEXTERM_FORWARD_SOCKS__');
+            } catch (_err) {
+                return '';
+            }
+        })
+        .toContain('echo:__NEXTERM_FORWARD_SOCKS__');
+    await directForwardRow.getByTitle('停止').click();
+    await expect(directForwardRow).toContainText('已停止');
+    await directUdpForwardRow.getByTitle('停止').click();
+    await expect(directUdpForwardRow).toContainText('已停止');
+    await localForwardRow.getByTitle('停止').click();
+    await expect(localForwardRow).toContainText('已停止');
+    await remoteForwardRow.getByTitle('停止').click();
+    await expect(remoteForwardRow).toContainText('已停止');
+    await socksForwardRow.getByTitle('停止').click();
+    await expect(socksForwardRow).toContainText('已停止');
+
+    await page.getByRole('button', { name: '会话集' }).click();
 
     await page.getByRole('button', { name: '脚本', exact: true }).click();
     await page.getByRole('button', { name: '新建脚本' }).click();

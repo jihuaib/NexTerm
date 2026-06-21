@@ -16,6 +16,13 @@ const PREVIEW_SETTINGS = {
     sidebarWidth: 278,
     defaultLocalShell: '',
     defaultLocalCwd: '',
+    defaultSerialBaudRate: 115200,
+    defaultSerialDataBits: 8,
+    defaultSerialStopBits: 1,
+    defaultSerialParity: 'none',
+    defaultSerialFlowControl: 'none',
+    defaultSerialDtr: true,
+    defaultSerialRts: true,
     connectionAutoReconnect: true,
     connectionReconnectDelay: 3,
     connectionReconnectMaxAttempts: 5,
@@ -97,8 +104,13 @@ function isLocalProtocol(protocol) {
     return protocol === 'local' || protocol === 'shell';
 }
 
+function isSerialProtocol(protocol) {
+    return protocol === 'serial';
+}
+
 function defaultPortForProtocol(protocol) {
     if (isLocalProtocol(protocol)) return null;
+    if (isSerialProtocol(protocol)) return null;
     if (protocol === 'ssh') return 22;
     return PREVIEW_SETTINGS.defaultPort;
 }
@@ -112,20 +124,47 @@ function stringField(def, existing, key, fallback = '') {
     return existing?.[key] || fallback;
 }
 
+function numberField(def, existing, key, fallback, allowed = []) {
+    const value = hasOwn(def, key) ? def[key] : existing?.[key];
+    const next = Number(value);
+    if (!Number.isFinite(next)) return fallback;
+    if (allowed.length && !allowed.includes(next)) return fallback;
+    return next;
+}
+
+function booleanField(def, existing, key, fallback = true) {
+    const value = hasOwn(def, key) ? def[key] : existing?.[key];
+    if (value === true || value === 'true' || value === 1 || value === '1') return true;
+    if (value === false || value === 'false' || value === 0 || value === '0') return false;
+    return fallback;
+}
+
+function serialParity(value) {
+    const next = String(value || '').trim().toLowerCase();
+    return ['none', 'even', 'odd', 'mark', 'space'].includes(next) ? next : 'none';
+}
+
+function serialFlowControl(value) {
+    const next = String(value || '').trim().toLowerCase();
+    return ['none', 'hardware', 'software'].includes(next) ? next : 'none';
+}
+
 function normalizeSession(def = {}, existing = null) {
     const timestamp = nowIso();
     const protocol = def.protocol || existing?.protocol || PREVIEW_SETTINGS.defaultProtocol;
     const isLocal = isLocalProtocol(protocol);
+    const isSerial = isSerialProtocol(protocol);
     const host = stringField(def, existing, 'host').trim();
+    const serialPath = stringField(def, existing, 'serialPath').trim();
     const port = defaultPortForProtocol(protocol);
     return {
         id: def.id || existing?.id || `preview-${Date.now().toString(36)}`,
         type: 'session',
         resource: 'session',
-        name: def.name || existing?.name || host || (isLocal ? 'Local Shell' : ''),
+        name: def.name || existing?.name || host || serialPath || (isLocal ? 'Local Shell' : ''),
         protocol,
-        host,
-        port: isLocal ? null : Number(def.port || existing?.port) || port,
+        host: isSerial ? '' : host,
+        port: isLocal || isSerial ? null : Number(def.port || existing?.port) || port,
         username: stringField(def, existing, 'username'),
         authType:
             def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
@@ -135,6 +174,16 @@ function normalizeSession(def = {}, existing = null) {
         passphrase: '',
         shell: stringField(def, existing, 'shell'),
         cwd: stringField(def, existing, 'cwd'),
+        serialPath,
+        serialBaudRate: numberField(def, existing, 'serialBaudRate', 115200),
+        serialDataBits: numberField(def, existing, 'serialDataBits', 8, [5, 6, 7, 8]),
+        serialStopBits: numberField(def, existing, 'serialStopBits', 1, [1, 2]),
+        serialParity: serialParity(hasOwn(def, 'serialParity') ? def.serialParity : existing?.serialParity),
+        serialFlowControl: serialFlowControl(
+            hasOwn(def, 'serialFlowControl') ? def.serialFlowControl : existing?.serialFlowControl
+        ),
+        serialDtr: booleanField(def, existing, 'serialDtr', true),
+        serialRts: booleanField(def, existing, 'serialRts', true),
         folderId: def.folderId === undefined ? existing?.folderId || null : def.folderId || null,
         tags: Array.isArray(def.tags) ? def.tags : existing?.tags || [],
         description: def.description || existing?.description || '',
@@ -273,8 +322,14 @@ export function ensureRuntimeApis() {
             return ok(getPreviewSessions());
         },
         async save(def) {
-            if (!isLocalProtocol(def.protocol) && (!def.host || !String(def.host).trim()))
+            if (
+                !isLocalProtocol(def.protocol) &&
+                !isSerialProtocol(def.protocol) &&
+                (!def.host || !String(def.host).trim())
+            )
                 return fail('请填写主机地址');
+            if (isSerialProtocol(def.protocol) && (!def.serialPath || !String(def.serialPath).trim()))
+                return fail('请选择串口设备');
             if (def.protocol === 'ssh' && (!def.username || !String(def.username).trim()))
                 return fail('请填写 SSH 用户名');
 
@@ -390,10 +445,15 @@ export function ensureRuntimeApis() {
             this.disconnect(options.sessionId);
             const isLocal = isLocalProtocol(options.protocol);
             const isSsh = options.protocol === 'ssh';
+            const isSerial = isSerialProtocol(options.protocol);
             emit('terminal:status', {
                 sessionId: options.sessionId,
                 status: 'connecting',
-                msg: isLocal ? '正在启动本地 Shell' : `正在连接 ${options.host}:${options.port}`
+                msg: isLocal
+                    ? '正在启动本地 Shell'
+                    : isSerial
+                      ? `正在打开串口 ${options.serialPath}`
+                      : `正在连接 ${options.host}:${options.port}`
             });
 
             const queue = [
@@ -413,7 +473,9 @@ export function ensureRuntimeApis() {
                                     ? `Local shell requires Electron with npm run dev.\r\n`
                                     : isSsh
                                       ? `SSH/SFTP requires Electron with npm run dev.\r\n`
-                                      : `Connected to ${options.host}:${options.port} (${options.protocol})\r\n`) +
+                                      : isSerial
+                                        ? `Serial ports require Electron with npm run dev.\r\n`
+                                        : `Connected to ${options.host}:${options.port} (${options.protocol})\r\n`) +
                                 `Real terminal sessions run in Electron.\r\n\r\npreview$ `
                         )
                     });
@@ -421,6 +483,30 @@ export function ensureRuntimeApis() {
             ];
             timers.set(options.sessionId, queue);
             return ok();
+        },
+        async listSerialPorts() {
+            return ok([
+                {
+                    path: '/dev/tty.usbserial-preview',
+                    label: '/dev/tty.usbserial-preview (Preview)',
+                    manufacturer: 'Preview',
+                    serialNumber: '',
+                    pnpId: '',
+                    locationId: '',
+                    vendorId: '',
+                    productId: ''
+                },
+                {
+                    path: 'COM3',
+                    label: 'COM3 (Preview)',
+                    manufacturer: 'Preview',
+                    serialNumber: '',
+                    pnpId: '',
+                    locationId: '',
+                    vendorId: '',
+                    productId: ''
+                }
+            ]);
         },
         disconnect(sessionId) {
             const queue = timers.get(sessionId) || [];
@@ -524,6 +610,39 @@ export function ensureRuntimeApis() {
             return Array.from(files)
                 .map(file => file.path || file.name || '')
                 .filter(Boolean);
+        }
+    };
+
+    window.portForwardApi ||= {
+        async list() {
+            return ok([]);
+        },
+        async start(payload = {}) {
+            const forward = {
+                id: payload.id || `preview-forward-${Date.now().toString(36)}`,
+                sessionId: payload.type === 'direct' ? '' : payload.sessionId || '',
+                type: payload.type || 'direct',
+                transport: payload.type === 'direct' && payload.transport === 'udp' ? 'udp' : 'tcp',
+                name: payload.name || '',
+                bindHost: payload.bindHost || '127.0.0.1',
+                bindPort: Number(payload.bindPort) || 0,
+                targetHost: payload.targetHost || '',
+                targetPort: Number(payload.targetPort) || null,
+                status: 'active',
+                startedAt: nowIso(),
+                msg: '预览环境不执行真实端口转发'
+            };
+            emit('port-forward:update', forward);
+            return ok(forward, '端口转发已启动');
+        },
+        async stop(payload = {}) {
+            const forward = {
+                id: typeof payload === 'string' ? payload : payload.id,
+                status: 'stopped',
+                msg: '端口转发已停止'
+            };
+            emit('port-forward:update', forward);
+            return ok(forward, '端口转发已停止');
         }
     };
 

@@ -7,6 +7,7 @@ const {
     stopLocalScriptTask
 } = require('./scriptProcessRunner');
 const { normalizeTerminalOutput } = require('./scriptIoBridge');
+const { normalizeTerminalSize, sameTerminalSize } = require('./terminalSize');
 
 const T = TELNET;
 
@@ -171,8 +172,10 @@ class TelnetManager {
     resize(sessionId, cols, rows) {
         const ctx = this.conns.get(sessionId);
         if (!ctx) return;
-        ctx.cols = cols;
-        ctx.rows = rows;
+        const nextSize = normalizeTerminalSize(cols, rows, ctx);
+        if (sameTerminalSize(ctx, nextSize)) return;
+        ctx.cols = nextSize.cols;
+        ctx.rows = nextSize.rows;
         this._sendNaws(ctx);
     }
 

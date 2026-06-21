@@ -6,6 +6,8 @@ const { sessionDataPath } = require('../utils/appPaths');
 const STORE_KEY = 'sessions';
 const FOLDER_STORE_KEY = 'sessionFolders';
 const DATA_VERSION = 1;
+const DEFAULT_SESSION_COLOR = 'blue';
+const SESSION_COLORS = new Set(['blue', 'green', 'amber', 'rose', 'violet', 'slate']);
 
 function nowIso() {
     return new Date().toISOString();
@@ -19,8 +21,13 @@ function isLocalProtocol(protocol) {
     return protocol === 'local' || protocol === 'shell';
 }
 
+function isSerialProtocol(protocol) {
+    return protocol === 'serial';
+}
+
 function defaultPortForProtocol(protocol) {
     if (isLocalProtocol(protocol)) return null;
+    if (isSerialProtocol(protocol)) return null;
     if (protocol === 'ssh') return 22;
     return 23;
 }
@@ -30,6 +37,11 @@ function normalizeCredentialSaveMode(value) {
     return 'prompt';
 }
 
+function normalizeSessionColor(value) {
+    const next = String(value || '').trim();
+    return SESSION_COLORS.has(next) ? next : DEFAULT_SESSION_COLOR;
+}
+
 function hasOwn(object, key) {
     return Object.prototype.hasOwnProperty.call(object || {}, key);
 }
@@ -37,6 +49,31 @@ function hasOwn(object, key) {
 function stringField(def, existing, key, fallback = '') {
     if (hasOwn(def, key)) return String(def[key] || '');
     return existing?.[key] || fallback;
+}
+
+function numberField(def, existing, key, fallback, allowed = []) {
+    const value = hasOwn(def, key) ? def[key] : existing?.[key];
+    const next = Number(value);
+    if (!Number.isFinite(next)) return fallback;
+    if (allowed.length && !allowed.includes(next)) return fallback;
+    return next;
+}
+
+function booleanField(def, existing, key, fallback = true) {
+    const value = hasOwn(def, key) ? def[key] : existing?.[key];
+    if (value === true || value === 'true' || value === 1 || value === '1') return true;
+    if (value === false || value === 'false' || value === 0 || value === '0') return false;
+    return fallback;
+}
+
+function serialParity(value) {
+    const next = String(value || '').trim().toLowerCase();
+    return ['none', 'even', 'odd', 'mark', 'space'].includes(next) ? next : 'none';
+}
+
+function serialFlowControl(value) {
+    const next = String(value || '').trim().toLowerCase();
+    return ['none', 'hardware', 'software'].includes(next) ? next : 'none';
 }
 
 function normalizeFolder(folder = {}, existing = null) {
@@ -57,25 +94,38 @@ function normalizeSession(def = {}, existing = null) {
     const timestamp = nowIso();
     const protocol = def.protocol || existing?.protocol || 'telnet';
     const isLocal = isLocalProtocol(protocol);
+    const isSerial = isSerialProtocol(protocol);
     const host = stringField(def, existing, 'host').trim();
+    const serialPath = stringField(def, existing, 'serialPath').trim();
     const port = defaultPortForProtocol(protocol);
     return {
         id: def.id || existing?.id || makeId('session'),
         type: 'session',
         resource: 'session',
-        name: (def.name && def.name.trim()) || existing?.name || host || (isLocal ? 'Local Shell' : ''),
+        name: (def.name && def.name.trim()) || existing?.name || host || serialPath || (isLocal ? 'Local Shell' : ''),
+        color: normalizeSessionColor(hasOwn(def, 'color') ? def.color : existing?.color),
         protocol,
-        host,
-        port: isLocal ? null : Number(def.port || existing?.port) || port,
+        host: isSerial ? '' : host,
+        port: isLocal || isSerial ? null : Number(def.port || existing?.port) || port,
         username: stringField(def, existing, 'username'),
         authType:
             def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
         privateKeyPath: stringField(def, existing, 'privateKeyPath'),
-        credentialSaveMode: isLocal
+        credentialSaveMode: isLocal || isSerial
             ? 'prompt'
             : normalizeCredentialSaveMode(def.credentialSaveMode || existing?.credentialSaveMode),
         shell: stringField(def, existing, 'shell'),
         cwd: stringField(def, existing, 'cwd'),
+        serialPath,
+        serialBaudRate: numberField(def, existing, 'serialBaudRate', 115200),
+        serialDataBits: numberField(def, existing, 'serialDataBits', 8, [5, 6, 7, 8]),
+        serialStopBits: numberField(def, existing, 'serialStopBits', 1, [1, 2]),
+        serialParity: serialParity(hasOwn(def, 'serialParity') ? def.serialParity : existing?.serialParity),
+        serialFlowControl: serialFlowControl(
+            hasOwn(def, 'serialFlowControl') ? def.serialFlowControl : existing?.serialFlowControl
+        ),
+        serialDtr: booleanField(def, existing, 'serialDtr', true),
+        serialRts: booleanField(def, existing, 'serialRts', true),
         folderId: def.folderId === undefined ? existing?.folderId || null : def.folderId || null,
         tags: Array.isArray(def.tags) ? def.tags : existing?.tags || [],
         description: def.description || existing?.description || '',
@@ -181,7 +231,9 @@ class SessionApp {
         try {
             if (!def) return errorResponse('会话参数不能为空');
             const protocol = def.protocol || 'telnet';
-            if (!isLocalProtocol(protocol) && !def.host) return errorResponse('主机地址不能为空');
+            if (!isLocalProtocol(protocol) && !isSerialProtocol(protocol) && !def.host)
+                return errorResponse('主机地址不能为空');
+            if (isSerialProtocol(protocol) && !def.serialPath) return errorResponse('请选择串口设备');
             if (protocol === 'ssh' && !def.username) return errorResponse('SSH 用户名不能为空');
             const list = this.store.get(STORE_KEY, []);
             const existing = list.find(s => s.id === def.id) || null;

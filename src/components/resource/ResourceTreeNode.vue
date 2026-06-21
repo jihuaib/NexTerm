@@ -47,8 +47,8 @@
 
 <script setup>
     import { computed } from 'vue';
-    import { File, Folder, FolderOpen, HardDrive, Layers, SquareTerminal } from '@lucide/vue';
-    import { RESOURCE_NODE_TYPES, isLocalSessionProtocol } from '../../models/resources';
+    import { Cable, File, Folder, FolderOpen, HardDrive, Layers, Server, SquareTerminal } from '@lucide/vue';
+    import { RESOURCE_NODE_TYPES, isLocalSessionProtocol, isSerialSessionProtocol } from '../../models/resources';
 
     const props = defineProps({
         node: { type: Object, required: true },
@@ -75,10 +75,13 @@
     }));
     const protocolLabel = computed(() => {
         if (isLocalSessionProtocol(props.node.protocol)) return 'LOCAL';
+        if (isSerialSessionProtocol(props.node.protocol)) return 'SERIAL';
         return String(props.node.protocol || 'telnet').toUpperCase();
     });
     const nodeTitle = computed(() => {
         if (isSession.value && isLocalSessionProtocol(props.node.protocol)) return `${props.node.name} - Local Shell`;
+        if (isSession.value && isSerialSessionProtocol(props.node.protocol))
+            return `${props.node.name} - serial://${props.node.serialPath || ''}`;
         if (isSession.value && props.node.protocol === 'ssh')
             return `${props.node.name} - ssh://${props.node.username ? `${props.node.username}@` : ''}${props.node.host}:${props.node.port}`;
         if (isSession.value)
@@ -90,7 +93,10 @@
     const iconComponent = computed(() => {
         if (props.node.icon === 'layers') return Layers;
         if (props.node.icon === 'folder-open') return FolderOpen;
-        if (props.node.type === RESOURCE_NODE_TYPES.SESSION) return SquareTerminal;
+        if (props.node.type === RESOURCE_NODE_TYPES.SESSION && isSerialSessionProtocol(props.node.protocol)) return Cable;
+        if (props.node.type === RESOURCE_NODE_TYPES.SESSION && isLocalSessionProtocol(props.node.protocol))
+            return SquareTerminal;
+        if (props.node.type === RESOURCE_NODE_TYPES.SESSION) return Server;
         if (props.node.type === RESOURCE_NODE_TYPES.FILE) return File;
         if (props.node.type === RESOURCE_NODE_TYPES.FILE_FOLDER) return props.level === 0 ? HardDrive : Folder;
         return Folder;

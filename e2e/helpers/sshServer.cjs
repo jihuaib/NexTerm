@@ -1,5 +1,6 @@
 const { generateKeyPairSync } = require('crypto');
 const { constants } = require('fs');
+const net = require('net');
 const posixPath = require('path').posix;
 const { Server } = require('ssh2');
 const { STATUS_CODE } = require('ssh2/lib/protocol/SFTP.js');
@@ -245,10 +246,23 @@ async function startTestSshServer(options = {}) {
     const username = 'e2e';
     const password = options.password || 'password';
     const clients = new Set();
+    const forwardServers = new Set();
 
     const server = new Server({ hostKeys: [hostKey] }, client => {
         clients.add(client);
-        client.on('close', () => clients.delete(client));
+        const remoteForwards = new Map();
+        client.on('close', () => {
+            clients.delete(client);
+            for (const forwardServer of remoteForwards.values()) {
+                forwardServers.delete(forwardServer);
+                try {
+                    forwardServer.close();
+                } catch (_err) {
+                    /* test cleanup */
+                }
+            }
+            remoteForwards.clear();
+        });
 
         client.on('authentication', ctx => {
             if (ctx.method === 'password' && ctx.username === username && ctx.password === password) {
@@ -259,6 +273,73 @@ async function startTestSshServer(options = {}) {
         });
 
         client.on('ready', () => {
+            client.on('request', (accept, reject, name, info = {}) => {
+                if (name === 'tcpip-forward') {
+                    const bindHost = info.bindAddr || '127.0.0.1';
+                    const requestedPort = Number(info.bindPort) || 0;
+                    const forwardServer = net.createServer(socket => {
+                        client.forwardOut(
+                            bindHost,
+                            forwardServer.address().port,
+                            socket.remoteAddress || '127.0.0.1',
+                            Number(socket.remotePort) || 0,
+                            (err, channel) => {
+                                if (err) {
+                                    socket.destroy();
+                                    return;
+                                }
+                                socket.pipe(channel);
+                                channel.pipe(socket);
+                            }
+                        );
+                    });
+                    const onForwardError = () => reject?.();
+                    forwardServer.once('error', onForwardError);
+                    forwardServer.listen(requestedPort, bindHost, () => {
+                        forwardServer.off('error', onForwardError);
+                        const actualPort = forwardServer.address().port;
+                        remoteForwards.set(`${bindHost}:${actualPort}`, forwardServer);
+                        forwardServers.add(forwardServer);
+                        accept?.(actualPort);
+                    });
+                    return;
+                }
+
+                if (name === 'cancel-tcpip-forward') {
+                    const bindHost = info.bindAddr || '127.0.0.1';
+                    const bindPort = Number(info.bindPort) || 0;
+                    const key = `${bindHost}:${bindPort}`;
+                    const forwardServer = remoteForwards.get(key);
+                    if (forwardServer) {
+                        remoteForwards.delete(key);
+                        forwardServers.delete(forwardServer);
+                        forwardServer.close(() => accept?.());
+                    } else {
+                        accept?.();
+                    }
+                }
+            });
+
+            client.on('tcpip', (accept, reject, info = {}) => {
+                const destHost = info.destIP || info.destHost || '127.0.0.1';
+                const destPort = Number(info.destPort);
+                if (!destPort) {
+                    reject?.();
+                    return;
+                }
+                const channel = accept();
+                const socket = net.connect({ host: destHost, port: destPort }, () => {
+                    channel.pipe(socket);
+                    socket.pipe(channel);
+                });
+                const close = () => {
+                    channel.destroy?.();
+                    socket.destroy?.();
+                };
+                channel.on('error', close);
+                socket.on('error', close);
+            });
+
             client.on('session', accept => {
                 const session = accept();
                 session.on('pty', acceptPty => acceptPty && acceptPty());
@@ -297,6 +378,14 @@ async function startTestSshServer(options = {}) {
                         /* test cleanup */
                     }
                 }
+                for (const forwardServer of [...forwardServers]) {
+                    try {
+                        forwardServer.close();
+                    } catch (_err) {
+                        /* test cleanup */
+                    }
+                }
+                forwardServers.clear();
                 server.close(done);
                 setTimeout(done, 1000).unref();
             })

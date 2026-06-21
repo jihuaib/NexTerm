@@ -1,10 +1,16 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
+import { isLocalSessionProtocol } from '../models/resources';
 import { getXtermTheme } from '../theme/themeManager';
 import { eventBus } from '../utils/eventBus';
 
 const views = new Map();
+const FIT_DEBOUNCE_MS = 80;
+const REFRESH_DELAYS_MS = [0, 80, 240];
+const ACTIVATE_REFRESH_DELAYS_MS = [0, 50, 150, 400];
+const MIN_TERMINAL_COLS = 2;
+const MIN_TERMINAL_ROWS = 2;
 
 function b64ToBytes(b64) {
     const bin = atob(b64);
@@ -38,6 +44,63 @@ function emitStatus(view, status, msg = '') {
     view.statusListeners.forEach(listener => listener(status, msg));
 }
 
+function isVisible(view) {
+    if (!view?.mountEl?.isConnected || document.visibilityState === 'hidden') return false;
+    const rect = view.mountEl.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+
+function validSize(cols, rows) {
+    return Number.isFinite(cols) && Number.isFinite(rows) && cols >= MIN_TERMINAL_COLS && rows >= MIN_TERMINAL_ROWS;
+}
+
+function currentSize(view) {
+    const cols = Math.floor(Number(view?.term?.cols));
+    const rows = Math.floor(Number(view?.term?.rows));
+    return validSize(cols, rows) ? { cols, rows } : null;
+}
+
+function clearRefreshTimers(view) {
+    view.refreshTimers.forEach(timer => window.clearTimeout(timer));
+    view.refreshTimers.clear();
+}
+
+function refreshVisibleRows(view) {
+    if (!view || view.disposed || !view.opened || !isVisible(view)) return;
+    const rows = Math.floor(Number(view.term.rows)) || 0;
+    if (rows <= 0) return;
+    view.term.refresh(0, rows - 1);
+}
+
+function queueTerminalRefresh(view, delays = REFRESH_DELAYS_MS) {
+    if (!view || view.disposed || !view.opened) return;
+    clearRefreshTimers(view);
+    delays.forEach(delay => {
+        const timer = window.setTimeout(() => {
+            view.refreshTimers.delete(timer);
+            window.requestAnimationFrame(() => refreshVisibleRows(view));
+        }, delay);
+        view.refreshTimers.add(timer);
+    });
+}
+
+function reportTerminalSize(view) {
+    const size = currentSize(view);
+    if (!size) return;
+    if (view.lastReportedSize.cols === size.cols && view.lastReportedSize.rows === size.rows) return;
+    view.lastReportedSize = size;
+    window.terminalApi.resize(view.sessionId, size.cols, size.rows);
+}
+
+function isWindowsPlatform() {
+    return /Win/i.test(navigator.platform || '') || /Windows/i.test(navigator.userAgent || '');
+}
+
+function terminalCompatibilityOptions(session) {
+    if (!isWindowsPlatform() || !isLocalSessionProtocol(session?.protocol)) return {};
+    return { windowsMode: true };
+}
+
 function createView(session, settings) {
     const term = new Terminal({
         cursorBlink: settings.cursorBlink,
@@ -46,7 +109,8 @@ function createView(session, settings) {
         fontFamily: settings.fontFamily,
         theme: getXtermTheme(settings.themeId),
         scrollback: settings.scrollback,
-        allowProposedApi: true
+        allowProposedApi: true,
+        ...terminalCompatibilityOptions(session)
     });
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
@@ -68,7 +132,10 @@ function createView(session, settings) {
         shortcutHandler: null,
         selectionHandler: null,
         statusListeners: new Set(),
-        disposables: []
+        disposables: [],
+        fitTimer: null,
+        refreshTimers: new Set(),
+        lastReportedSize: { cols: 0, rows: 0 }
     };
 
     term.attachCustomKeyEventHandler(event => {
@@ -117,14 +184,30 @@ export function mountTerminalView(session, settings, host) {
     return view;
 }
 
-export function fitTerminalView(view) {
+export function fitTerminalView(view, options = {}) {
     if (!view || view.disposed || !view.opened) return;
+    if (!isVisible(view)) return;
     try {
         view.fitAddon.fit();
-        window.terminalApi.resize(view.sessionId, view.term.cols, view.term.rows);
+        reportTerminalSize(view);
+        if (options.refresh !== false) queueTerminalRefresh(view, options.refreshDelays);
     } catch (_err) {
         /* hidden or detached terminal containers cannot always be measured */
     }
+}
+
+export function scheduleTerminalViewFit(view, options = {}) {
+    if (!view || view.disposed || !view.opened) return;
+    if (view.fitTimer) window.clearTimeout(view.fitTimer);
+    const delay = Math.max(0, Number(options.delay ?? FIT_DEBOUNCE_MS) || 0);
+    view.fitTimer = window.setTimeout(() => {
+        view.fitTimer = null;
+        window.requestAnimationFrame(() => fitTerminalView(view, options));
+    }, delay);
+}
+
+export function activateTerminalView(view) {
+    scheduleTerminalViewFit(view, { delay: 0, refreshDelays: ACTIVATE_REFRESH_DELAYS_MS });
 }
 
 export function focusTerminalView(view) {
@@ -141,7 +224,7 @@ export function updateTerminalViewSettings(view, settings, previousSettings = {}
     view.term.options.scrollback = settings.scrollback;
     if (settings.fontSize !== previousSettings.fontSize || settings.fontFamily !== previousSettings.fontFamily) {
         view.term.options.fontSize = settings.fontSize;
-        fitTerminalView(view);
+        scheduleTerminalViewFit(view, { delay: 0 });
     }
 }
 
@@ -206,6 +289,8 @@ export function disposeTerminalView(sessionId) {
         if (typeof disposable === 'function') disposable();
         else disposable?.dispose?.();
     });
+    if (view.fitTimer) window.clearTimeout(view.fitTimer);
+    clearRefreshTimers(view);
     view.statusListeners.clear();
     view.mountEl.remove();
     view.term.dispose();

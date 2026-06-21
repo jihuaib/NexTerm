@@ -9,8 +9,14 @@ import {
     defaultPortForProtocol,
     getSessionsForFolder,
     isLocalSessionProtocol,
+    isSerialSessionProtocol,
     isSshSessionProtocol,
     normalizeCredentialSaveMode,
+    normalizeSessionColor,
+    normalizeSerialBoolean,
+    normalizeSerialFlowControl,
+    normalizeSerialNumber,
+    normalizeSerialParity,
     normalizeSessionFolder,
     normalizeSessionProfile
 } from './models/resources';
@@ -46,6 +52,13 @@ export const DEFAULT_SETTINGS = {
     sidebarWidth: 278,
     defaultLocalShell: '',
     defaultLocalCwd: '',
+    defaultSerialBaudRate: 115200,
+    defaultSerialDataBits: 8,
+    defaultSerialStopBits: 1,
+    defaultSerialParity: 'none',
+    defaultSerialFlowControl: 'none',
+    defaultSerialDtr: true,
+    defaultSerialRts: true,
     connectionAutoReconnect: true,
     connectionReconnectDelay: 3,
     connectionReconnectMaxAttempts: 5,
@@ -80,6 +93,7 @@ export const store = reactive({
     selectedFileNodeId: FILE_ROOT_ID,
     scripts: [],
     scriptTasks: [],
+    portForwards: [],
     layout: rootLeaf, // Tab Group 分屏布局树
     activePaneId: rootLeaf.id, // 当前聚焦的 Tab Group id
     settings: { ...DEFAULT_SETTINGS },
@@ -88,6 +102,10 @@ export const store = reactive({
 
 function genRuntimeId() {
     return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function genPortForwardId() {
+    return 'pf-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
 function nowIso() {
@@ -108,16 +126,50 @@ function normalizeScript(def = {}) {
     };
 }
 
+function normalizePortForward(def = {}, existing = null) {
+    const type = ['direct', 'local', 'remote', 'dynamic'].includes(def.type) ? def.type : existing?.type || 'direct';
+    const transport =
+        type === 'direct' && ['tcp', 'udp'].includes(def.transport || existing?.transport)
+            ? def.transport || existing?.transport
+            : 'tcp';
+    return {
+        id: def.id || existing?.id || genPortForwardId(),
+        sessionId: type === 'direct' ? '' : def.sessionId || existing?.sessionId || '',
+        type,
+        transport,
+        name: String(def.name ?? existing?.name ?? '').trim(),
+        bindHost: String(def.bindHost ?? existing?.bindHost ?? '127.0.0.1').trim() || '127.0.0.1',
+        bindPort: Number(def.bindPort ?? existing?.bindPort) || 0,
+        targetHost: type === 'dynamic' ? '' : String(def.targetHost ?? existing?.targetHost ?? '').trim(),
+        targetPort: type === 'dynamic' ? null : Number(def.targetPort ?? existing?.targetPort) || null,
+        status: def.status || existing?.status || 'stopped',
+        startedAt: def.startedAt || existing?.startedAt || '',
+        msg: def.msg ?? existing?.msg ?? ''
+    };
+}
+
+function upsertPortForward(def = {}) {
+    const index = store.portForwards.findIndex(item => item.id === def.id);
+    const existing = index >= 0 ? store.portForwards[index] : null;
+    const next = normalizePortForward(def, existing);
+    if (index >= 0) Object.assign(store.portForwards[index], next);
+    else store.portForwards.unshift(next);
+    return index >= 0 ? store.portForwards[index] : next;
+}
+
 function makeRuntimeSession(def) {
     const protocol = def.protocol || store.settings.defaultProtocol;
     const isLocal = isLocalSessionProtocol(protocol);
+    const isSerial = isSerialSessionProtocol(protocol);
     const port = defaultPortForProtocol(protocol, store.settings.defaultPort);
+    const serialPath = String(def.serialPath || '').trim();
     return {
         profileId: def.id || null,
         sessionId: genRuntimeId(),
-        name: def.name || def.host || (isLocal ? 'Local Shell' : ''),
-        host: def.host || '',
-        port: isLocal ? null : Number(def.port) || port,
+        name: def.name || def.host || serialPath || (isLocal ? 'Local Shell' : ''),
+        color: normalizeSessionColor(def.color),
+        host: isSerial ? '' : def.host || '',
+        port: isLocal || isSerial ? null : Number(def.port) || port,
         protocol,
         username: def.username || '',
         authType: def.authType || (def.privateKeyPath ? 'key' : 'password'),
@@ -127,6 +179,17 @@ function makeRuntimeSession(def) {
         passphrase: def.passphrase || '',
         shell: def.shell || '',
         cwd: def.cwd || '',
+        serialPath,
+        serialBaudRate: normalizeSerialNumber(
+            def.serialBaudRate,
+            store.settings.defaultSerialBaudRate || 115200
+        ),
+        serialDataBits: normalizeSerialNumber(def.serialDataBits, store.settings.defaultSerialDataBits || 8, [5, 6, 7, 8]),
+        serialStopBits: normalizeSerialNumber(def.serialStopBits, store.settings.defaultSerialStopBits || 1, [1, 2]),
+        serialParity: normalizeSerialParity(def.serialParity || store.settings.defaultSerialParity),
+        serialFlowControl: normalizeSerialFlowControl(def.serialFlowControl || store.settings.defaultSerialFlowControl),
+        serialDtr: normalizeSerialBoolean(def.serialDtr, store.settings.defaultSerialDtr),
+        serialRts: normalizeSerialBoolean(def.serialRts, store.settings.defaultSerialRts),
         status: 'connecting',
         connectionStarted: false,
         manualDisconnect: false,
@@ -205,16 +268,18 @@ export async function loadSessionFolders() {
 function toPlainSessionPayload(def = {}) {
     const protocol = def.protocol || store.settings.defaultProtocol;
     const isLocal = isLocalSessionProtocol(protocol);
+    const isSerial = isSerialSessionProtocol(protocol);
     const isSsh = isSshSessionProtocol(protocol);
     const authType = isSsh ? def.authType || (def.privateKeyPath ? 'key' : 'password') : '';
     const port = defaultPortForProtocol(protocol, store.settings.defaultPort);
     return {
         id: def.id || undefined,
         name: String(def.name || '').trim(),
+        color: normalizeSessionColor(def.color),
         folderId: normalizeSessionFolderId(def.folderId),
         protocol,
-        host: isLocal ? '' : String(def.host || '').trim(),
-        port: isLocal ? null : Number(def.port) || port,
+        host: isLocal || isSerial ? '' : String(def.host || '').trim(),
+        port: isLocal || isSerial ? null : Number(def.port) || port,
         username: isSsh ? String(def.username || '').trim() : '',
         authType,
         credentialSaveMode: isSsh ? normalizeCredentialSaveMode(def.credentialSaveMode) : 'prompt',
@@ -223,6 +288,22 @@ function toPlainSessionPayload(def = {}) {
         passphrase: '',
         shell: isLocal ? String(def.shell || '').trim() : '',
         cwd: isLocal ? String(def.cwd || '').trim() : '',
+        serialPath: isSerial ? String(def.serialPath || '').trim() : '',
+        serialBaudRate: isSerial
+            ? normalizeSerialNumber(def.serialBaudRate, store.settings.defaultSerialBaudRate || 115200)
+            : store.settings.defaultSerialBaudRate || 115200,
+        serialDataBits: isSerial
+            ? normalizeSerialNumber(def.serialDataBits, store.settings.defaultSerialDataBits || 8, [5, 6, 7, 8])
+            : store.settings.defaultSerialDataBits || 8,
+        serialStopBits: isSerial
+            ? normalizeSerialNumber(def.serialStopBits, store.settings.defaultSerialStopBits || 1, [1, 2])
+            : store.settings.defaultSerialStopBits || 1,
+        serialParity: isSerial ? normalizeSerialParity(def.serialParity) : store.settings.defaultSerialParity || 'none',
+        serialFlowControl: isSerial
+            ? normalizeSerialFlowControl(def.serialFlowControl)
+            : store.settings.defaultSerialFlowControl || 'none',
+        serialDtr: isSerial ? normalizeSerialBoolean(def.serialDtr, store.settings.defaultSerialDtr) : true,
+        serialRts: isSerial ? normalizeSerialBoolean(def.serialRts, store.settings.defaultSerialRts) : true,
         tags: Array.isArray(def.tags) ? def.tags.map(tag => String(tag)) : [],
         description: String(def.description || '')
     };
@@ -329,6 +410,58 @@ export async function importScripts() {
 export async function exportScripts(ids = []) {
     if (!window.scriptApi?.exportScripts) return { status: 'error', msg: '当前环境不支持导出脚本', data: null };
     return window.scriptApi.exportScripts(ids);
+}
+
+// ---------- 端口转发 ----------
+export async function loadPortForwards() {
+    if (!window.portForwardApi?.list) return;
+    const res = await window.portForwardApi.list();
+    if (res.status === 'success') store.portForwards = res.data.map(item => normalizePortForward(item));
+}
+
+export function createPortForwardDraft(patch = {}) {
+    return normalizePortForward({
+        type: 'direct',
+        transport: 'tcp',
+        bindHost: '127.0.0.1',
+        bindPort: 8080,
+        targetHost: '127.0.0.1',
+        targetPort: 80,
+        ...patch
+    });
+}
+
+export async function startPortForward(def = {}) {
+    const forward = normalizePortForward(def);
+    upsertPortForward({ ...forward, status: 'starting', msg: '' });
+    const res = await window.portForwardApi.start(forward);
+    if (res.status === 'success') {
+        upsertPortForward({ ...forward, ...res.data, status: res.data?.status || 'active' });
+    } else {
+        upsertPortForward({ ...forward, status: 'error', msg: res.msg || '启动端口转发失败' });
+    }
+    return res;
+}
+
+export async function stopPortForward(id) {
+    const forward = store.portForwards.find(item => item.id === id);
+    if (!forward) return { status: 'error', msg: '端口转发不存在', data: null };
+    if (forward.status !== 'active' && forward.status !== 'starting') {
+        forward.status = 'stopped';
+        return { status: 'success', msg: '端口转发已停止', data: forward };
+    }
+    const res = await window.portForwardApi.stop({ id });
+    if (res.status === 'success') upsertPortForward({ ...forward, ...res.data, status: 'stopped' });
+    else upsertPortForward({ ...forward, status: 'error', msg: res.msg || '停止端口转发失败' });
+    return res;
+}
+
+export async function deletePortForward(id) {
+    const forward = store.portForwards.find(item => item.id === id);
+    if (forward && (forward.status === 'active' || forward.status === 'starting')) await stopPortForward(id);
+    const index = store.portForwards.findIndex(item => item.id === id);
+    if (index >= 0) store.portForwards.splice(index, 1);
+    return { status: 'success', msg: '端口转发已删除', data: null };
 }
 
 export function getConnectedSessions() {
@@ -529,6 +662,16 @@ function handleScriptTerminalStatus(payload = {}) {
         task.status = payload.status === 'error' ? 'failed' : 'stopped';
         task.finishedAt = nowIso();
     });
+    store.portForwards.forEach(forward => {
+        if (forward.sessionId !== payload.sessionId || forward.status === 'stopped') return;
+        forward.status = 'stopped';
+        forward.msg = payload.status === 'error' ? 'SSH 会话异常断开' : 'SSH 会话已断开';
+    });
+}
+
+function handlePortForwardEvent(payload = {}) {
+    if (!payload.id) return;
+    upsertPortForward(payload);
 }
 
 let scriptTaskEventsReady = false;
@@ -538,6 +681,7 @@ export function initScriptTaskEvents() {
     scriptTaskEventsReady = true;
     eventBus.on('script:task', handleScriptTaskEvent);
     eventBus.on('terminal:status', handleScriptTerminalStatus);
+    eventBus.on('port-forward:update', handlePortForwardEvent);
 }
 
 // ---------- Tab Group / 连接 ----------

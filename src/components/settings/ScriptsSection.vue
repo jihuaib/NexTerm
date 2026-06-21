@@ -13,7 +13,7 @@
                 <div class="doc-title">运行环境</div>
                 <p>
                     JavaScript 使用 NexTerm 自带的 Electron/Node 运行时，不要求目标机器安装 node。Python、Tcl、Shell
-                    需要 NexTerm 所在机器有 python3/python、tclsh、sh；SSH/Telnet 远端不需要这些解释器，除非脚本自己通过
+                    需要 NexTerm 所在机器有 python3/python、tclsh、sh；SSH/Telnet/Serial 目标端不需要这些解释器，除非脚本自己通过
                     term.send 下发远端命令去调用。
                 </p>
             </div>

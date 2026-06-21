@@ -89,9 +89,10 @@
     import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
     import { ChevronDown, ChevronUp, ClipboardPaste, Copy, RotateCw, Search, X } from '@lucide/vue';
     import { store, setSessionStatus } from '../store';
-    import { isLocalSessionProtocol, isSshSessionProtocol } from '../models/resources';
+    import { isLocalSessionProtocol, isSerialSessionProtocol, isSshSessionProtocol } from '../models/resources';
     import { notifyError, notifySuccess } from '../services/notify';
     import {
+        activateTerminalView,
         clearTerminalSearch,
         findTerminalNext,
         findTerminalPrevious,
@@ -99,6 +100,7 @@
         focusTerminalView,
         getTerminalViewSize,
         mountTerminalView,
+        scheduleTerminalViewFit,
         setTerminalSelectionHandler,
         onTerminalViewStatus,
         setTerminalShortcutHandler,
@@ -158,6 +160,29 @@
         fitTerminalView(view);
     }
 
+    function scheduleFit(options = {}) {
+        scheduleTerminalViewFit(view, options);
+    }
+
+    function activateVisibleTerminal(options = {}) {
+        if (!view || !props.active) return;
+        activateTerminalView(view);
+        if (options.focus) focusTerminalView(view);
+    }
+
+    function handleSurfaceResize() {
+        closeTerminalMenu();
+        scheduleFit();
+    }
+
+    function handleWindowFocus() {
+        activateVisibleTerminal();
+    }
+
+    function handleVisibilityChange() {
+        if (document.visibilityState === 'visible') activateVisibleTerminal();
+    }
+
     onMounted(async () => {
         view = mountTerminalView(props.session, store.settings, host.value);
         setTerminalShortcutHandler(view, handleTerminalShortcut);
@@ -187,11 +212,13 @@
         showStatus(view.status, view.statusMsg);
 
         // 自适应大小
-        resizeObserver = new ResizeObserver(() => doFit());
+        resizeObserver = new ResizeObserver(() => scheduleFit());
         resizeObserver.observe(host.value);
         document.addEventListener('click', closeTerminalMenu);
         window.addEventListener('blur', closeTerminalMenu);
-        window.addEventListener('resize', closeTerminalMenu);
+        window.addEventListener('resize', handleSurfaceResize);
+        window.addEventListener('focus', handleWindowFocus);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         // 首次挂载才发起连接；运行中会话拖到新窗格时复用原 sessionId。
         if (!props.session.connectionStarted) {
@@ -308,7 +335,7 @@
     }
 
     function isRemoteSession() {
-        return props.session.protocol === 'ssh' || props.session.protocol === 'telnet';
+        return props.session.protocol === 'ssh' || props.session.protocol === 'telnet' || props.session.protocol === 'serial';
     }
 
     function isNonRetryableConnectionError(msg = '') {
@@ -412,6 +439,14 @@
             sshKnownHostsEnabled: store.settings.sshKnownHostsEnabled,
             shell: props.session.shell,
             cwd: props.session.cwd,
+            serialPath: props.session.serialPath,
+            serialBaudRate: props.session.serialBaudRate,
+            serialDataBits: props.session.serialDataBits,
+            serialStopBits: props.session.serialStopBits,
+            serialParity: props.session.serialParity,
+            serialFlowControl: props.session.serialFlowControl,
+            serialDtr: props.session.serialDtr,
+            serialRts: props.session.serialRts,
             cols: size.cols,
             rows: size.rows
         };
@@ -438,9 +473,12 @@
 
     function connectWithTimeout(payload) {
         const isLocal = isLocalSessionProtocol(payload.protocol);
-        const timeoutMs = isLocal ? 12_000 : 20_000;
+        const isSerial = isSerialSessionProtocol(payload.protocol);
+        const timeoutMs = isLocal || isSerial ? 12_000 : 20_000;
         const timeoutMsg = isLocal
             ? '本地 Shell 启动超时，请检查 node-pty 是否已按当前 Electron 版本重编，或尝试设置 NEXTERM_PTY_BACKEND=winpty 后重启。'
+            : isSerial
+              ? '串口打开超时，请确认设备已连接且未被其他程序占用。'
             : '连接请求超时，请稍后重试。';
         let timer = null;
         return Promise.race([
@@ -475,10 +513,15 @@
     function showStatus(status, msg) {
         currentStatus.value = status;
         const isLocal = isLocalSessionProtocol(props.session.protocol);
+        const isSerial = isSerialSessionProtocol(props.session.protocol);
         const map = {
             connecting: [
                 'info',
-                isLocal ? '正在启动本地 Shell …' : `正在连接 ${props.session.host}:${props.session.port} …`
+                isLocal
+                    ? '正在启动本地 Shell …'
+                    : isSerial
+                      ? `正在打开串口 ${props.session.serialPath || ''} …`
+                    : `正在连接 ${props.session.host}:${props.session.port} …`
             ],
             connected: ['ok', ''],
             closed: ['warn', msg || '连接已关闭'],
@@ -636,9 +679,10 @@
         () => props.active,
         active => {
             if (!active || !view) return;
-            requestAnimationFrame(() => {
-                doFit();
-                focusTerminalView(view);
+            nextTick(() => {
+                requestAnimationFrame(() => {
+                    activateVisibleTerminal({ focus: true });
+                });
             });
         }
     );
@@ -652,7 +696,9 @@
         if (resizeObserver) resizeObserver.disconnect();
         document.removeEventListener('click', closeTerminalMenu);
         window.removeEventListener('blur', closeTerminalMenu);
-        window.removeEventListener('resize', closeTerminalMenu);
+        window.removeEventListener('resize', handleSurfaceResize);
+        window.removeEventListener('focus', handleWindowFocus);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
     });
 </script>
 
