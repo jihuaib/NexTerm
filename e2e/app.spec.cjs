@@ -685,6 +685,10 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
         .poll(async () => (await fs.readdir(shellCwd)).filter(name => name.startsWith('.nexterm-script-')))
         .toEqual([]);
 
+    const pythonProbeCommand =
+        process.platform === 'win32'
+            ? 'echo __NEXTERM_PYTHON_EXEC^_TARGET__'
+            : 'printf "%s\\\\n" "__NEXTERM_PYTHON_EXEC_""TARGET__"';
     await page.getByRole('button', { name: '新建脚本' }).click();
     const pythonScriptDialog = page.locator('.dialog').filter({ hasText: '新建脚本' });
     await expect(pythonScriptDialog).toBeVisible();
@@ -693,8 +697,8 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await pythonScriptDialog
         .getByLabel('脚本', { exact: true })
         .fill(
-            'out = term.exec("pwd", expect="$ ", timeout=5000)\n' +
-                'term.print("__NEXTERM_PYTHON_EXEC_OK__\\n" if "/" in out else "__NEXTERM_PYTHON_EXEC_MISS__\\n")'
+            `out = term.exec(${JSON.stringify(pythonProbeCommand)}, expect="__NEXTERM_PYTHON_EXEC_TARGET__", timeout=5000)\n` +
+                'term.print("__NEXTERM_PYTHON_EXEC_OK__\\n" if "__NEXTERM_PYTHON_EXEC_TARGET__" in out else "__NEXTERM_PYTHON_EXEC_MISS__\\n")'
         );
     await pythonScriptDialog.getByRole('button', { name: '保存' }).click();
     const e2ePythonScriptRow = page.locator('.script-row').filter({ hasText: 'E2E Python Script' });
