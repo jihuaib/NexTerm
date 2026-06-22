@@ -13,6 +13,7 @@
 - **端口转发**：支持不依赖 SSH 的 Direct TCP / UDP 转发，也支持 SSH Local、SSH Remote 和 SOCKS5 Dynamic 隧道。
 - **会话管理**：左侧树形会话管理器，支持多级文件夹、新建 / 编辑 / 删除、拖动归档、双击连接；会话和文件夹持久化在应用 `userData/data/sessions.json`。
 - **主题切换**：内置 深色 / 浅色 / Solarized / Monokai，单一主题对象同时驱动应用外壳 CSS 令牌与 xterm 配色；可调字号；实时热更新。
+- **离线激活**：未激活可试用 30 天，支持导出激活请求并导入签名授权文件；签发流程见 [docs/LICENSE_ACTIVATION.md](docs/LICENSE_ACTIVATION.md)。
 
 ## 界面截图
 

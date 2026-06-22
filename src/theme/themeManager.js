@@ -14,5 +14,9 @@ export function applyAppTheme(themeId) {
 // 取 xterm 的 ITheme
 export function getXtermTheme(themeId) {
     const theme = THEMES[themeId] || THEMES.dark;
-    return theme.terminal;
+    const terminal = theme.id === 'light' ? THEMES.dark.terminal : theme.terminal;
+    return {
+        ...terminal,
+        background: '#000000'
+    };
 }

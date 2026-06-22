@@ -1,6 +1,22 @@
 <template>
     <div class="pane">
-        <div ref="host" class="xterm-host" @contextmenu.prevent.stop="handleTerminalContextMenu" />
+        <div class="terminal-body">
+            <div ref="host" class="xterm-host" @contextmenu.prevent.stop="handleTerminalContextMenu" />
+        </div>
+        <footer class="console-status" :title="consoleStatusTitle">
+            <CommandSetBar :session="props.session" @sent="focusCurrentTerminal" />
+            <div class="console-status__right">
+                <span class="console-status__item console-status__name">{{ props.session.name }}</span>
+                <span class="console-status__item console-status__target">{{ connectionInfoText }}</span>
+                <span v-if="terminalSizeLabel" class="console-status__item console-status__size">
+                    {{ terminalSizeLabel }}
+                </span>
+                <span class="console-status__state" :class="`is-${statusTone}`">
+                    <i />
+                    {{ statusText }}
+                </span>
+            </div>
+        </footer>
         <div v-if="searchVisible" class="search-panel" @mousedown.stop @keydown.stop>
             <Search :size="14" :stroke-width="1.9" />
             <input
@@ -108,6 +124,7 @@
     } from '../services/terminalViews';
     import BaseDialog from './ui/BaseDialog.vue';
     import ContextMenu from './ui/ContextMenu.vue';
+    import CommandSetBar from './CommandSetBar.vue';
 
     const props = defineProps({
         session: { type: Object, required: true },
@@ -118,6 +135,7 @@
     const banner = ref('');
     const bannerType = ref('info');
     const currentStatus = ref(props.session.status || 'connecting');
+    const terminalSize = ref({ cols: 0, rows: 0 });
     const bannerCanCopy = computed(() => banner.value && (bannerType.value === 'err' || bannerType.value === 'warn'));
     const bannerCanReconnect = computed(
         () => ['closed', 'error'].includes(currentStatus.value) && !authPromptVisible.value
@@ -146,22 +164,79 @@
         const index = Math.max(1, Number(searchResult.value.resultIndex) + 1);
         return `${index}/${count}`;
     });
+    const connectionInfoText = computed(() => {
+        const protocol = String(props.session.protocol || '').toUpperCase() || 'SESSION';
+        if (isLocalSessionProtocol(props.session.protocol)) {
+            const shell = props.session.shell || 'Local Shell';
+            return `${protocol} · ${shell}`;
+        }
+        if (isSerialSessionProtocol(props.session.protocol)) {
+            const path = props.session.serialPath || '未选择串口';
+            const baud = props.session.serialBaudRate ? ` · ${props.session.serialBaudRate}` : '';
+            return `${protocol} · ${path}${baud}`;
+        }
+        const user = props.session.username ? `${props.session.username}@` : '';
+        const host = props.session.host || '未配置主机';
+        const port = props.session.port ? `:${props.session.port}` : '';
+        return `${protocol} · ${user}${host}${port}`;
+    });
+    const statusText = computed(() => {
+        const map = {
+            connecting: '连接中',
+            connected: isLocalSessionProtocol(props.session.protocol) ? '运行中' : '已连接',
+            closed: '已关闭',
+            error: '连接错误',
+            info: '等待输入'
+        };
+        return map[currentStatus.value] || currentStatus.value || '未知';
+    });
+    const statusTone = computed(() => {
+        if (currentStatus.value === 'connected') return 'connected';
+        if (currentStatus.value === 'connecting' || currentStatus.value === 'info') return 'connecting';
+        if (currentStatus.value === 'error') return 'error';
+        return 'closed';
+    });
+    const terminalSizeLabel = computed(() => {
+        const cols = Number(terminalSize.value.cols) || 0;
+        const rows = Number(terminalSize.value.rows) || 0;
+        return cols && rows ? `${cols}x${rows}` : '';
+    });
+    const consoleStatusTitle = computed(() =>
+        [props.session.name, connectionInfoText.value, statusText.value, banner.value, terminalSizeLabel.value]
+            .filter(Boolean)
+            .join(' · ')
+    );
 
     let view = null;
     let resizeObserver = null;
     let stopStatusListener = null;
     let autoCopyTimer = null;
     let autoReconnectTimer = null;
+    let terminalSizeTimer = null;
     let autoReconnectAttempts = Number(props.session.reconnectAttempts) || 0;
     let suppressAutoReconnect = false;
     let lastAutoCopiedSelection = '';
 
     function doFit() {
         fitTerminalView(view);
+        refreshTerminalSize();
     }
 
     function scheduleFit(options = {}) {
         scheduleTerminalViewFit(view, options);
+        if (terminalSizeTimer) window.clearTimeout(terminalSizeTimer);
+        terminalSizeTimer = window.setTimeout(() => {
+            terminalSizeTimer = null;
+            refreshTerminalSize();
+        }, Math.max(120, Number(options.delay ?? 80) + 40));
+    }
+
+    function refreshTerminalSize() {
+        terminalSize.value = getTerminalViewSize(view);
+    }
+
+    function focusCurrentTerminal() {
+        focusTerminalView(view);
     }
 
     function activateVisibleTerminal(options = {}) {
@@ -187,7 +262,7 @@
         view = mountTerminalView(props.session, store.settings, host.value);
         setTerminalShortcutHandler(view, handleTerminalShortcut);
         setTerminalSelectionHandler(view, handleTerminalSelectionChange);
-        stopStatusListener = onTerminalViewStatus(view, (status, msg) => {
+        stopStatusListener = onTerminalViewStatus(view, (status, msg, payload = {}) => {
             currentStatus.value = status;
             setSessionStatus(props.session.sessionId, status);
             showStatus(status, msg);
@@ -195,6 +270,9 @@
                 clearAutoReconnect();
                 autoReconnectAttempts = 0;
                 props.session.reconnectAttempts = 0;
+                if (payload.credentialSaved?.password) props.session.hasSavedPassword = true;
+                if (payload.credentialSaved?.passphrase) props.session.hasSavedPassphrase = true;
+                if (payload.credentialSaveError) notifyError(payload.credentialSaveError, '凭据保存失败');
                 clearPromptModeSecrets();
             }
             const retryKind = retrySecretKind(status, msg);
@@ -208,6 +286,7 @@
             scheduleAutoReconnect(status, msg);
         });
         doFit();
+        refreshTerminalSize();
         focusTerminalView(view);
         showStatus(view.status, view.statusMsg);
 
@@ -311,7 +390,9 @@
     }
 
     function needsInitialSecretPrompt() {
-        return isPasswordAuthSession() && !String(props.session.password || '');
+        if (!isPasswordAuthSession()) return false;
+        if (String(props.session.password || '')) return false;
+        return props.session.credentialSaveMode !== 'persist' || !props.session.hasSavedPassword;
     }
 
     function retrySecretKind(status, msg = '') {
@@ -691,6 +772,7 @@
         setTerminalShortcutHandler(view, null);
         setTerminalSelectionHandler(view, null);
         if (autoCopyTimer) window.clearTimeout(autoCopyTimer);
+        if (terminalSizeTimer) window.clearTimeout(terminalSizeTimer);
         clearAutoReconnect();
         if (stopStatusListener) stopStatusListener();
         if (resizeObserver) resizeObserver.disconnect();
@@ -706,13 +788,92 @@
     .pane {
         position: absolute;
         inset: 0;
+        display: flex;
+        flex-direction: column;
         padding: 8px;
-        background: var(--nx-bg);
+        background: #000000;
+        min-width: 0;
+        min-height: 0;
+    }
+    .terminal-body {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
     }
     .xterm-host {
         width: 100%;
         height: 100%;
         overflow: hidden;
+        background: #000000;
+    }
+    .console-status {
+        flex: 0 0 24px;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 2px 0 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        background: #000000;
+        color: rgba(255, 255, 255, 0.58);
+        font-size: 11px;
+        line-height: 1;
+        user-select: text;
+    }
+    .console-status__right {
+        flex: 0 1 auto;
+        min-width: 0;
+        max-width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        overflow: hidden;
+        white-space: nowrap;
+    }
+    .console-status__item {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .console-status__name {
+        max-width: 180px;
+        color: rgba(255, 255, 255, 0.72);
+    }
+    .console-status__target {
+        max-width: min(360px, 38vw);
+    }
+    .console-status__size {
+        flex: 0 0 auto;
+        font-family: var(--nx-font-mono);
+        color: rgba(255, 255, 255, 0.46);
+    }
+    .console-status__state {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: rgba(255, 255, 255, 0.7);
+    }
+    .console-status__state i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
+    }
+    .console-status__state.is-connected {
+        color: var(--nx-success);
+    }
+    .console-status__state.is-connecting {
+        color: var(--nx-warning);
+    }
+    .console-status__state.is-closed {
+        color: var(--nx-text-dim);
+    }
+    .console-status__state.is-error {
+        color: var(--nx-danger);
     }
     .search-panel {
         position: absolute;
@@ -745,6 +906,9 @@
     .search-panel input:focus {
         border-color: var(--nx-accent);
     }
+    .search-panel > svg {
+        color: var(--nx-icon);
+    }
     .search-panel button {
         display: grid;
         place-items: center;
@@ -753,13 +917,13 @@
         border: 1px solid transparent;
         border-radius: 5px;
         background: transparent;
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
         cursor: pointer;
     }
     .search-panel button:hover {
         border-color: var(--nx-border);
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
     }
     .search-count {
         min-width: 42px;
@@ -801,13 +965,13 @@
         border: 1px solid transparent;
         border-radius: 6px;
         background: transparent;
-        color: currentColor;
+        color: var(--nx-icon);
         cursor: pointer;
         opacity: 0.78;
         user-select: none;
     }
     .banner__copy:hover {
-        border-color: currentColor;
+        border-color: var(--nx-icon);
         opacity: 1;
     }
     .banner.info {

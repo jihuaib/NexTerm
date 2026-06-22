@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { isLocalSessionProtocol } from '../models/resources';
 import { getXtermTheme } from '../theme/themeManager';
+import { normalizeTerminalHighlightRules } from './terminalHighlightRules';
 import { eventBus } from '../utils/eventBus';
 
 const views = new Map();
@@ -11,6 +12,8 @@ const REFRESH_DELAYS_MS = [0, 80, 240];
 const ACTIVATE_REFRESH_DELAYS_MS = [0, 50, 150, 400];
 const MIN_TERMINAL_COLS = 2;
 const MIN_TERMINAL_ROWS = 2;
+const HIGHLIGHT_REFRESH_DEBOUNCE_MS = 80;
+const TERMINAL_HIGHLIGHT_LIMIT = 900;
 
 function b64ToBytes(b64) {
     const bin = atob(b64);
@@ -37,11 +40,11 @@ const SEARCH_DECORATIONS = {
     activeMatchColorOverviewRuler: '#2dd4bf'
 };
 
-function emitStatus(view, status, msg = '') {
+function emitStatus(view, status, msg = '', payload = {}) {
     view.status = status;
     view.statusMsg = msg;
     view.session.status = status;
-    view.statusListeners.forEach(listener => listener(status, msg));
+    view.statusListeners.forEach(listener => listener(status, msg, payload));
 }
 
 function isVisible(view) {
@@ -101,6 +104,149 @@ function terminalCompatibilityOptions(session) {
     return { windowsMode: true };
 }
 
+function clearTerminalHighlightTimer(view) {
+    if (!view?.highlightTimer) return;
+    window.clearTimeout(view.highlightTimer);
+    view.highlightTimer = null;
+}
+
+function clearTerminalHighlightDecorations(view) {
+    if (!view?.highlightDecorations?.length) return;
+    view.highlightDecorations.forEach(item => {
+        item.decoration?.dispose?.();
+        item.marker?.dispose?.();
+    });
+    view.highlightDecorations = [];
+}
+
+function bufferLineToTextWithCells(line) {
+    const cells = [];
+    let text = '';
+    for (let x = 0; x < line.length; x += 1) {
+        const cell = line.getCell(x);
+        if (!cell || cell.getWidth() === 0) continue;
+        const chars = cell.getChars() || ' ';
+        const start = text.length;
+        text += chars;
+        cells.push({
+            start,
+            end: text.length,
+            x,
+            width: Math.max(1, cell.getWidth())
+        });
+    }
+    return { text, cells };
+}
+
+function findRuleMatches(text, rule) {
+    if (rule.mode === 'regex') {
+        let regex;
+        try {
+            regex = new RegExp(rule.text, rule.caseSensitive ? 'g' : 'gi');
+        } catch (_err) {
+            return [];
+        }
+        const matches = [];
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+            const value = match[0] || '';
+            if (!value) {
+                regex.lastIndex += 1;
+                continue;
+            }
+            matches.push({ index: match.index, length: value.length, color: rule.color });
+        }
+        return matches;
+    }
+
+    const needle = rule.caseSensitive ? rule.text : rule.text.toLowerCase();
+    if (!needle) return [];
+    const haystack = rule.caseSensitive ? text : text.toLowerCase();
+    const matches = [];
+    let index = haystack.indexOf(needle);
+    while (index >= 0) {
+        matches.push({ index, length: needle.length, color: rule.color });
+        index = haystack.indexOf(needle, index + Math.max(1, needle.length));
+    }
+    return matches;
+}
+
+function matchToCellRange(cells, start, length, cols) {
+    const end = start + length;
+    const first = cells.find(cell => cell.end > start);
+    if (!first) return null;
+    const after = cells.find(cell => cell.start >= end);
+    const last = cells[cells.length - 1];
+    const endX = after ? after.x : last.x + last.width;
+    const x = Math.min(cols - 1, Math.max(0, first.x));
+    const width = Math.min(cols - x, Math.max(1, endX - x));
+    return width > 0 ? { x, width } : null;
+}
+
+function registerHighlightDecoration(view, row, x, width, color) {
+    const buffer = view.term.buffer.active;
+    const marker = view.term.registerMarker(row - buffer.baseY - buffer.cursorY);
+    if (!marker) return false;
+    const decoration = view.term.registerDecoration({
+        marker,
+        x,
+        width,
+        foregroundColor: color,
+        layer: 'bottom'
+    });
+    if (!decoration) {
+        marker.dispose();
+        return false;
+    }
+    view.highlightDecorations.push({ marker, decoration });
+    return true;
+}
+
+function refreshTerminalHighlights(view) {
+    if (!view || view.disposed || !view.opened) return;
+    clearTerminalHighlightTimer(view);
+    clearTerminalHighlightDecorations(view);
+
+    if (view.settings?.terminalHighlightEnabled === false) return;
+    const rules = normalizeTerminalHighlightRules(view.settings?.terminalHighlightRules).filter(rule => rule.enabled);
+    if (!rules.length) return;
+
+    const buffer = view.term.buffer.active;
+    const cols = Math.floor(Number(view.term.cols)) || 0;
+    const rows = Math.floor(Number(view.term.rows)) || 0;
+    if (!buffer || cols <= 0 || rows <= 0) return;
+
+    const startRow = Math.max(0, buffer.viewportY || 0);
+    const endRow = Math.min(buffer.length - 1, startRow + rows - 1);
+    let count = 0;
+
+    for (let row = startRow; row <= endRow && count < TERMINAL_HIGHLIGHT_LIMIT; row += 1) {
+        const line = buffer.getLine(row);
+        if (!line) continue;
+        const { text, cells } = bufferLineToTextWithCells(line);
+        if (!text.trim() || !cells.length) continue;
+
+        for (const rule of rules) {
+            const matches = findRuleMatches(text, rule);
+            for (const match of matches) {
+                const range = matchToCellRange(cells, match.index, match.length, cols);
+                if (!range) continue;
+                if (registerHighlightDecoration(view, row, range.x, range.width, match.color)) count += 1;
+                if (count >= TERMINAL_HIGHLIGHT_LIMIT) return;
+            }
+        }
+    }
+}
+
+function scheduleTerminalHighlightRefresh(view, options = {}) {
+    if (!view || view.disposed || !view.opened) return;
+    clearTerminalHighlightTimer(view);
+    const delay = Math.max(0, Number(options.delay ?? HIGHLIGHT_REFRESH_DEBOUNCE_MS) || 0);
+    view.highlightTimer = window.setTimeout(() => {
+        window.requestAnimationFrame(() => refreshTerminalHighlights(view));
+    }, delay);
+}
+
 function createView(session, settings) {
     const term = new Terminal({
         cursorBlink: settings.cursorBlink,
@@ -128,6 +274,7 @@ function createView(session, settings) {
         disposed: false,
         status: session.status || 'connecting',
         statusMsg: '',
+        settings: { ...settings },
         searchResult: { resultIndex: 0, resultCount: 0 },
         shortcutHandler: null,
         selectionHandler: null,
@@ -135,6 +282,8 @@ function createView(session, settings) {
         disposables: [],
         fitTimer: null,
         refreshTimers: new Set(),
+        highlightTimer: null,
+        highlightDecorations: [],
         lastReportedSize: { cols: 0, rows: 0 }
     };
 
@@ -154,6 +303,9 @@ function createView(session, settings) {
             if (typeof view.selectionHandler === 'function') view.selectionHandler(view.term.getSelection());
         })
     );
+    view.disposables.push(term.onWriteParsed(() => scheduleTerminalHighlightRefresh(view)));
+    view.disposables.push(term.onScroll(() => scheduleTerminalHighlightRefresh(view, { delay: 0 })));
+    view.disposables.push(term.onResize(() => scheduleTerminalHighlightRefresh(view, { delay: 0 })));
     view.disposables.push(
         eventBus.on('terminal:data', payload => {
             if (payload.sessionId !== view.sessionId || view.disposed) return;
@@ -163,7 +315,7 @@ function createView(session, settings) {
     view.disposables.push(
         eventBus.on('terminal:status', payload => {
             if (payload.sessionId !== view.sessionId || view.disposed) return;
-            emitStatus(view, payload.status, payload.msg);
+            emitStatus(view, payload.status, payload.msg, payload);
         })
     );
 
@@ -174,6 +326,7 @@ function createView(session, settings) {
 export function mountTerminalView(session, settings, host) {
     const view = views.get(session.sessionId) || createView(session, settings);
     view.session = session;
+    view.settings = { ...settings };
     if (view.mountEl.parentElement !== host) {
         host.appendChild(view.mountEl);
     }
@@ -181,6 +334,7 @@ export function mountTerminalView(session, settings, host) {
         view.term.open(view.mountEl);
         view.opened = true;
     }
+    scheduleTerminalHighlightRefresh(view, { delay: 0 });
     return view;
 }
 
@@ -217,6 +371,7 @@ export function focusTerminalView(view) {
 
 export function updateTerminalViewSettings(view, settings, previousSettings = {}) {
     if (!view || view.disposed) return;
+    view.settings = { ...settings };
     view.term.options.theme = getXtermTheme(settings.themeId);
     view.term.options.fontFamily = settings.fontFamily;
     view.term.options.cursorBlink = settings.cursorBlink;
@@ -226,6 +381,7 @@ export function updateTerminalViewSettings(view, settings, previousSettings = {}
         view.term.options.fontSize = settings.fontSize;
         scheduleTerminalViewFit(view, { delay: 0 });
     }
+    scheduleTerminalHighlightRefresh(view, { delay: 0 });
 }
 
 export function onTerminalViewStatus(view, listener) {
@@ -290,7 +446,9 @@ export function disposeTerminalView(sessionId) {
         else disposable?.dispose?.();
     });
     if (view.fitTimer) window.clearTimeout(view.fitTimer);
+    clearTerminalHighlightTimer(view);
     clearRefreshTimers(view);
+    clearTerminalHighlightDecorations(view);
     view.statusListeners.clear();
     view.mountEl.remove();
     view.term.dispose();

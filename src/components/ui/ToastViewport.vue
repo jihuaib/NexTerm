@@ -60,7 +60,7 @@
     }
     .toast__icon {
         margin-top: 1px;
-        color: var(--nx-accent);
+        color: var(--nx-icon);
     }
     .toast--success .toast__icon {
         color: #3fbf73;
@@ -96,12 +96,12 @@
         border: 1px solid transparent;
         border-radius: 6px;
         background: transparent;
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
         cursor: pointer;
     }
     .toast__close:hover {
         border-color: var(--nx-border);
-        color: var(--nx-text);
+        color: var(--nx-icon);
     }
     .toast-enter-active,
     .toast-leave-active {

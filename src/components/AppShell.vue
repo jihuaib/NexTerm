@@ -12,6 +12,7 @@
             <div class="titlebar__meta">
                 <span>{{ store.sessions.length }} 会话</span>
                 <span>{{ openSessionCount }} 连接</span>
+                <span class="license-pill" :class="licenseTone">{{ licenseLabel }}</span>
             </div>
             <IconButton title="设置" @click="openSettings">
                 <Settings :size="16" :stroke-width="1.9" />
@@ -20,12 +21,17 @@
 
         <div
             class="body"
-            :class="{ 'is-resizing-sidebar': resizingSidebar }"
-            :style="{ '--session-sidebar-width': `${sidebarWidth}px` }"
+            :class="{ 'is-resizing-sidebar': resizingSidebar, 'is-sidebar-collapsed': sidebarCollapsed }"
+            :style="{ '--session-sidebar-width': `${effectiveSidebarWidth}px` }"
         >
-            <SessionSidebar />
+            <SessionSidebar
+                :collapsed="sidebarCollapsed"
+                @toggle-collapsed="toggleSidebarCollapsed"
+                @expand="sidebarCollapsed = false"
+            />
 
             <div
+                v-if="!sidebarCollapsed"
                 class="sidebar-resizer"
                 role="separator"
                 aria-orientation="vertical"
@@ -42,6 +48,15 @@
             </main>
         </div>
 
+        <div v-if="licenseBlocked" class="license-lock">
+            <div class="license-lock__panel">
+                <KeyRound :size="24" :stroke-width="1.9" />
+                <h2>{{ store.license.status === 'time-error' ? '系统时间异常' : '试用已到期' }}</h2>
+                <p>{{ store.license.msg || '请导入授权文件后继续使用。' }}</p>
+                <button type="button" @click="openSettings">打开授权设置</button>
+            </div>
+        </div>
+
         <SettingsPanel v-if="store.settingsOpen" />
         <ToastViewport />
     </div>
@@ -49,7 +64,7 @@
 
 <script setup>
     import { computed, onUnmounted, ref, watch } from 'vue';
-    import { Settings } from '@lucide/vue';
+    import { KeyRound, Settings } from '@lucide/vue';
     import appIcon from '../../electron/assets/icon.svg';
     import { store, openSettings, updateSettings } from '../store';
     import { collectSessions } from '../layout';
@@ -64,8 +79,22 @@
     const SIDEBAR_MAX_WIDTH = 460;
 
     const resizingSidebar = ref(false);
+    const sidebarCollapsed = ref(false);
     const sidebarWidth = ref(readSidebarWidth());
+    const effectiveSidebarWidth = computed(() => (sidebarCollapsed.value ? 42 : sidebarWidth.value));
     const openSessionCount = computed(() => collectSessions(store.layout).length);
+    const licenseBlocked = computed(() => store.license.active === false);
+    const licenseTone = computed(() => {
+        if (store.license.status === 'active') return 'is-active';
+        if (store.license.status === 'trial') return 'is-trial';
+        return 'is-blocked';
+    });
+    const licenseLabel = computed(() => {
+        if (store.license.status === 'active') return '已激活';
+        if (store.license.status === 'trial') return `试用 ${store.license.daysRemaining ?? 0} 天`;
+        if (store.license.status === 'loading') return '授权读取中';
+        return '需激活';
+    });
 
     let sidebarResizeState = null;
 
@@ -80,6 +109,7 @@
     }
 
     function startSidebarResize(event) {
+        if (sidebarCollapsed.value) return;
         if (event.button !== 0) return;
         event.preventDefault();
 
@@ -114,6 +144,10 @@
     function resetSidebarWidth() {
         sidebarWidth.value = SIDEBAR_DEFAULT_WIDTH;
         updateSettings({ sidebarWidth: sidebarWidth.value });
+    }
+
+    function toggleSidebarCollapsed() {
+        sidebarCollapsed.value = !sidebarCollapsed.value;
     }
 
     watch(
@@ -192,6 +226,18 @@
         border-radius: 999px;
         background: var(--nx-bg-overlay);
     }
+    .titlebar__meta .license-pill.is-active {
+        border-color: rgba(52, 211, 153, 0.45);
+        color: #34d399;
+    }
+    .titlebar__meta .license-pill.is-trial {
+        border-color: rgba(56, 189, 248, 0.45);
+        color: #38bdf8;
+    }
+    .titlebar__meta .license-pill.is-blocked {
+        border-color: rgba(251, 191, 36, 0.55);
+        color: #fbbf24;
+    }
     :deep(.icon-button) {
         margin-left: 6px;
     }
@@ -251,6 +297,45 @@
         padding: 8px;
         gap: 8px;
         background: var(--nx-bg);
+    }
+    .license-lock {
+        position: fixed;
+        inset: 52px 0 0;
+        z-index: 170;
+        display: grid;
+        place-items: center;
+        background: rgba(0, 0, 0, 0.62);
+        padding: 20px;
+    }
+    .license-lock__panel {
+        width: min(420px, 92vw);
+        border: 1px solid var(--nx-border);
+        border-radius: 8px;
+        background: var(--nx-surface-raised);
+        padding: 22px;
+        text-align: center;
+        box-shadow: 0 20px 56px rgba(0, 0, 0, 0.34);
+    }
+    .license-lock__panel svg {
+        color: var(--nx-accent);
+    }
+    .license-lock__panel h2 {
+        margin: 10px 0 6px;
+        font-size: 18px;
+    }
+    .license-lock__panel p {
+        margin: 0 0 16px;
+        color: var(--nx-text-dim);
+        line-height: 1.5;
+    }
+    .license-lock__panel button {
+        height: 34px;
+        padding: 0 14px;
+        border: 1px solid var(--nx-accent);
+        border-radius: 7px;
+        background: var(--nx-accent);
+        color: var(--nx-accent-text);
+        cursor: pointer;
     }
 
     @media (max-width: 860px) {

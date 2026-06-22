@@ -21,20 +21,32 @@
             @dragover.prevent
             @drop.stop="$emit('node-drop', { event: $event, node })"
         >
-            <component :is="iconComponent" :size="15" :stroke-width="1.8" />
+            <span
+                class="resource-toggle"
+                :class="{ hidden: !isBranch }"
+                :title="isCollapsed ? '展开' : '折叠'"
+                @click.stop="$emit('node-toggle', node)"
+                @dblclick.stop
+            >
+                <ChevronRight v-if="isCollapsed" :size="13" :stroke-width="2" />
+                <ChevronDown v-else :size="13" :stroke-width="2" />
+            </span>
+            <component :is="iconComponent" class="resource-icon" :size="15" :stroke-width="1.8" />
             <span class="resource-name">{{ node.name }}</span>
-            <span v-if="isSession" class="resource-protocol">{{ protocolLabel }}</span>
+            <span v-if="isSession" class="resource-protocol" :style="protocolStyle">{{ protocolLabel }}</span>
             <span v-if="showCount" class="resource-count">{{ node.itemCount }}</span>
         </button>
 
         <ResourceTreeNode
-            v-for="child in node.children || []"
+            v-for="child in visibleChildren"
             :key="child.id"
             :node="child"
             :level="level + 1"
             :selected-id="selectedId"
             :drop-hover-id="dropHoverId"
+            :collapsed-ids="collapsedIds"
             @select="$emit('select', $event)"
+            @node-toggle="$emit('node-toggle', $event)"
             @node-contextmenu="$emit('node-contextmenu', $event)"
             @node-activate="$emit('node-activate', $event)"
             @node-drop="$emit('node-drop', $event)"
@@ -47,18 +59,36 @@
 
 <script setup>
     import { computed } from 'vue';
-    import { Cable, File, Folder, FolderOpen, HardDrive, Layers, Server, SquareTerminal } from '@lucide/vue';
-    import { RESOURCE_NODE_TYPES, isLocalSessionProtocol, isSerialSessionProtocol } from '../../models/resources';
+    import {
+        Cable,
+        ChevronDown,
+        ChevronRight,
+        File,
+        Folder,
+        FolderOpen,
+        HardDrive,
+        Layers,
+        Server,
+        SquareTerminal
+    } from '@lucide/vue';
+    import {
+        RESOURCE_NODE_TYPES,
+        getProtocolColorOption,
+        isLocalSessionProtocol,
+        isSerialSessionProtocol
+    } from '../../models/resources';
 
     const props = defineProps({
         node: { type: Object, required: true },
         level: { type: Number, default: 0 },
         selectedId: { type: String, default: '' },
-        dropHoverId: { type: String, default: '' }
+        dropHoverId: { type: String, default: '' },
+        collapsedIds: { type: Array, default: () => [] }
     });
 
     defineEmits([
         'select',
+        'node-toggle',
         'node-contextmenu',
         'node-activate',
         'node-drop',
@@ -69,9 +99,21 @@
 
     const isSession = computed(() => props.node.type === RESOURCE_NODE_TYPES.SESSION);
     const isLeaf = computed(() => isSession.value || props.node.type === RESOURCE_NODE_TYPES.FILE);
+    const isBranch = computed(() => !isLeaf.value && (props.node.children || []).length > 0);
+    const isCollapsed = computed(() => isBranch.value && props.collapsedIds.includes(props.node.id));
+    const visibleChildren = computed(() => (isCollapsed.value ? [] : props.node.children || []));
     const showCount = computed(() => !isLeaf.value && props.node.itemCount !== undefined);
+    const protocolStyle = computed(() => {
+        const color = getProtocolColorOption(props.node.protocol);
+        return {
+            '--resource-protocol-color': color.swatch,
+            '--resource-protocol-bg': color.bg,
+            '--resource-protocol-border': color.border
+        };
+    });
     const rowStyle = computed(() => ({
-        paddingLeft: `${7 + props.level * 14}px`
+        paddingLeft: `${7 + props.level * 14}px`,
+        ...(isSession.value ? protocolStyle.value : {})
     }));
     const protocolLabel = computed(() => {
         if (isLocalSessionProtocol(props.node.protocol)) return 'LOCAL';
@@ -109,9 +151,9 @@
         min-width: 100%;
         height: 29px;
         display: grid;
-        grid-template-columns: 18px max-content auto;
+        grid-template-columns: 14px 18px max-content auto;
         align-items: center;
-        gap: 7px;
+        gap: 6px;
         padding-right: 7px;
         border: 1px solid transparent;
         border-radius: 6px;
@@ -130,11 +172,21 @@
         border-color: var(--nx-accent-border-soft);
         color: var(--nx-accent);
     }
+    .resource-row.session {
+        color: var(--resource-protocol-color);
+        font-weight: 500;
+    }
+    .resource-row.session:hover,
+    .resource-row.session.active {
+        background: var(--resource-protocol-bg);
+        border-color: var(--resource-protocol-border);
+        color: var(--resource-protocol-color);
+    }
     .resource-row.leaf {
-        grid-template-columns: 18px max-content;
+        grid-template-columns: 14px 18px max-content;
     }
     .resource-row.leaf.session {
-        grid-template-columns: 18px max-content max-content;
+        grid-template-columns: 14px 18px max-content max-content;
     }
     .resource-row.drop-hover {
         background: var(--nx-accent-active);
@@ -143,15 +195,37 @@
     .resource-name {
         min-width: max-content;
         white-space: nowrap;
+        font-weight: inherit;
+    }
+    .resource-toggle {
+        width: 14px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+        color: var(--nx-icon);
+        border-radius: 4px;
+    }
+    .resource-toggle.hidden {
+        visibility: hidden;
+    }
+    .resource-toggle:not(.hidden):hover {
+        background: var(--nx-control-muted);
+        color: var(--nx-icon);
+    }
+    .resource-row:not(.session) .resource-icon {
+        color: var(--nx-icon);
+    }
+    .resource-row.session .resource-icon {
+        color: var(--resource-protocol-color);
     }
     .resource-protocol {
         align-self: center;
         min-width: 0;
         padding: 1px 5px;
-        border: 1px solid var(--nx-border-soft);
+        border: 1px solid var(--resource-protocol-border);
         border-radius: 5px;
-        background: var(--nx-control-muted);
-        color: var(--nx-text-dim);
+        background: var(--resource-protocol-bg);
+        color: var(--resource-protocol-color);
         font-size: 10px;
         font-weight: 700;
         line-height: 1.25;

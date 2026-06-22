@@ -1,13 +1,17 @@
 <template>
-    <aside class="sidebar" @click="closeAllMenus">
+    <aside class="sidebar" :class="{ collapsed }" @click="closeAllMenus">
         <nav class="rail" aria-label="资源面板">
+            <IconButton :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" variant="rail" @click.stop="toggleCollapsed">
+                <PanelLeftOpen v-if="collapsed" :size="17" :stroke-width="1.8" />
+                <PanelLeftClose v-else :size="17" :stroke-width="1.8" />
+            </IconButton>
             <IconButton
                 v-for="panel in panels"
                 :key="panel.id"
                 :title="panel.label"
                 variant="rail"
                 :active="activePanel === panel.id"
-                @click="activePanel = panel.id"
+                @click="selectPanel(panel.id)"
             >
                 <component :is="panel.icon" :size="17" :stroke-width="1.8" />
             </IconButton>
@@ -39,7 +43,9 @@
                         :nodes="visibleSessionTreeNodes"
                         :selected-id="selectedSessionNodeId"
                         :drop-hover-id="dragHoverFolder"
+                        :collapsed-ids="effectiveCollapsedSessionNodeIds"
                         @select="selectSessionNode"
+                        @node-toggle="toggleSessionTreeNode"
                         @blank-contextmenu="event => openFolderMenu(event)"
                         @blank-drop="dropSessionToRoot"
                         @node-contextmenu="payload => openFolderMenu(payload.event, payload.node)"
@@ -353,6 +359,8 @@
         KeyRound,
         LocateFixed,
         Network,
+        PanelLeftClose,
+        PanelLeftOpen,
         Pencil,
         Play,
         Plus,
@@ -390,6 +398,11 @@
 
     const SAVED_SESSION_DND = 'application/x-nexterm-saved-session';
 
+    const props = defineProps({
+        collapsed: { type: Boolean, default: false }
+    });
+    const emit = defineEmits(['toggle-collapsed', 'expand']);
+
     const activePanel = ref('sessions');
     const dialogVisible = ref(false);
     const dialogFolderId = ref(null);
@@ -405,6 +418,7 @@
     const folderSubmitting = ref(false);
     const folderDeleting = ref(false);
     const query = ref('');
+    const collapsedSessionNodeIds = ref([]);
     const selectedSessionNodeId = ref('');
     const fileSessionId = ref('');
     const remotePath = ref('/');
@@ -467,6 +481,15 @@
         { id: 'known-host', label: 'Known Host', icon: Fingerprint }
     ];
 
+    function toggleCollapsed() {
+        emit('toggle-collapsed');
+    }
+
+    function selectPanel(panelId) {
+        activePanel.value = panelId;
+        if (props.collapsed) emit('expand');
+    }
+
     const activeTitle = computed(() => panels.find(panel => panel.id === activePanel.value)?.label || '');
     const activeMeta = computed(() => {
         if (activePanel.value === 'sessions')
@@ -481,6 +504,7 @@
         return fileSessionId.value ? remotePath.value : '未连接';
     });
     const visibleSessionTreeNodes = computed(() => filterTreeNodes(store.sessionTree.children || [], query.value));
+    const effectiveCollapsedSessionNodeIds = computed(() => (query.value ? [] : collapsedSessionNodeIds.value));
     const availableSshSessions = computed(() =>
         collectSessions(store.layout).filter(session => session.protocol === 'ssh' && session.status === 'connected')
     );
@@ -722,6 +746,23 @@
         if (node.type === RESOURCE_NODE_TYPES.SESSION_FOLDER) selectSessionFolder(node.id);
     }
 
+    function isCollapsibleSessionNode(node) {
+        return node?.type === RESOURCE_NODE_TYPES.SESSION_FOLDER && (node.children || []).length > 0;
+    }
+
+    function expandSessionTreeNode(nodeId) {
+        if (!nodeId) return;
+        collapsedSessionNodeIds.value = collapsedSessionNodeIds.value.filter(id => id !== nodeId);
+    }
+
+    function toggleSessionTreeNode(node) {
+        if (!isCollapsibleSessionNode(node)) return;
+        const set = new Set(collapsedSessionNodeIds.value);
+        if (set.has(node.id)) set.delete(node.id);
+        else set.add(node.id);
+        collapsedSessionNodeIds.value = Array.from(set);
+    }
+
     function selectFileNode(node) {
         selectedFileNodeId.value = node.id;
     }
@@ -798,6 +839,7 @@
             folderSubmitting.value = true;
             const res = await createSessionFolder(trimmed, folderDialogParentId.value);
             if (res.status === 'success') {
+                expandSessionTreeNode(folderDialogParentId.value);
                 selectedSessionNodeId.value = res.data.id;
                 folderSubmitting.value = false;
                 closeFolderDialog();
@@ -867,6 +909,7 @@
 
     function activateTreeNode(node) {
         if (node.type === RESOURCE_NODE_TYPES.SESSION) connect(node);
+        if (node.type === RESOURCE_NODE_TYPES.SESSION_FOLDER) toggleSessionTreeNode(node);
     }
 
     function getContextFolderId() {
@@ -1336,6 +1379,9 @@
         display: flex;
         min-height: 0;
     }
+    .sidebar.collapsed .panel {
+        display: none;
+    }
     .rail {
         width: 42px;
         flex: 0 0 42px;
@@ -1609,6 +1655,9 @@
         background: var(--nx-surface-raised);
         color: var(--nx-text);
         box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+    }
+    .file-drop-overlay svg {
+        color: var(--nx-icon);
     }
     .file-drop-overlay span {
         min-width: 0;

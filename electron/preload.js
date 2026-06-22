@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld('scriptApi', {
     exportScripts: ids => ipcRenderer.invoke('script:export', { ids })
 });
 
+contextBridge.exposeInMainWorld('commandSetApi', {
+    list: () => ipcRenderer.invoke('command-set:list'),
+    save: commandSet => ipcRenderer.invoke('command-set:save', commandSet),
+    remove: id => ipcRenderer.invoke('command-set:remove', id)
+});
+
 // 终端 / 连接
 contextBridge.exposeInMainWorld('terminalApi', {
     connect: options => ipcRenderer.invoke('terminal:connect', options),
@@ -65,6 +71,15 @@ contextBridge.exposeInMainWorld('updaterApi', {
     downloadUpdate: () => ipcRenderer.invoke('updater:downloadUpdate'),
     quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
     getCurrentVersion: () => ipcRenderer.invoke('updater:getCurrentVersion')
+});
+
+contextBridge.exposeInMainWorld('licenseApi', {
+    get: () => ipcRenderer.invoke('license:get'),
+    request: () => ipcRenderer.invoke('license:request'),
+    exportRequest: () => ipcRenderer.invoke('license:export-request'),
+    importText: text => ipcRenderer.invoke('license:import-text', text),
+    importFile: () => ipcRenderer.invoke('license:import-file'),
+    remove: () => ipcRenderer.invoke('license:remove')
 });
 
 contextBridge.exposeInMainWorld('knownHostsApi', {

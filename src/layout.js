@@ -71,6 +71,46 @@ export function addSessionToLeaf(root, leafId, session) {
     return rec(root);
 }
 
+export function insertSessionIntoLeaf(root, leafId, session, index = Number.MAX_SAFE_INTEGER) {
+    function rec(node) {
+        if (node.type === 'leaf') {
+            if (node.id !== leafId) return normalizeLeaf(node);
+            const current = getLeafSessions(node).filter(s => s.sessionId !== session.sessionId);
+            const insertAt = Math.max(0, Math.min(Number(index) || 0, current.length));
+            return {
+                ...normalizeLeaf(node),
+                sessions: [...current.slice(0, insertAt), session, ...current.slice(insertAt)],
+                activeSessionId: session.sessionId
+            };
+        }
+        return { ...node, children: node.children.map(rec) };
+    }
+    return rec(root);
+}
+
+export function reorderSessionInLeaf(root, leafId, sessionId, index) {
+    function rec(node) {
+        if (node.type === 'leaf') {
+            if (node.id !== leafId) return normalizeLeaf(node);
+            const leaf = normalizeLeaf(node);
+            const moving = leaf.sessions.find(s => s.sessionId === sessionId);
+            if (!moving) return leaf;
+            const remaining = leaf.sessions.filter(s => s.sessionId !== sessionId);
+            const insertAt = Math.max(0, Math.min(Number(index) || 0, remaining.length));
+            const sessions = [...remaining.slice(0, insertAt), moving, ...remaining.slice(insertAt)];
+            return {
+                ...leaf,
+                sessions,
+                activeSessionId: sessions.some(s => s.sessionId === leaf.activeSessionId)
+                    ? leaf.activeSessionId
+                    : sessions[0]?.sessionId || null
+            };
+        }
+        return { ...node, children: node.children.map(rec) };
+    }
+    return rec(root);
+}
+
 export function setLeafActiveSession(root, leafId, sessionId) {
     function rec(node) {
         if (node.type === 'leaf') {

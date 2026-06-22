@@ -31,7 +31,7 @@
         border: 1px solid var(--nx-border);
         border-radius: 7px;
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
         cursor: pointer;
         line-height: 1;
     }
@@ -49,32 +49,32 @@
         height: 30px;
         border-color: transparent;
         background: transparent;
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
     }
     .icon-button--ghost {
         border-color: transparent;
         background: var(--nx-bg-overlay);
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
     }
     .icon-button--primary,
     .icon-button.active {
         border-color: var(--nx-accent-border);
         background: var(--nx-accent-soft);
-        color: var(--nx-accent);
+        color: var(--nx-icon);
     }
     .icon-button:hover {
         border-color: var(--nx-accent);
         background: var(--nx-accent-hover);
-        color: var(--nx-accent);
+        color: var(--nx-icon);
     }
     .icon-button--rail:hover,
     .icon-button--ghost:hover {
         border-color: var(--nx-border);
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
     }
     .icon-button.danger:hover {
-        color: var(--nx-danger);
+        color: var(--nx-icon);
     }
     .icon-button:disabled {
         cursor: not-allowed;
@@ -83,6 +83,6 @@
     .icon-button:disabled:hover {
         border-color: var(--nx-border);
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
     }
 </style>

@@ -20,6 +20,22 @@ function scriptDataPath() {
     return userDataPath('data', 'scripts.json');
 }
 
+function commandSetDataPath() {
+    return userDataPath('data', 'command-sets.json');
+}
+
+function credentialDataPath() {
+    return userDataPath('data', 'credentials.json');
+}
+
+function licenseDataPath() {
+    return userDataPath('data', 'license.json');
+}
+
+function installDataPath() {
+    return userDataPath('data', 'install.json');
+}
+
 function terminalLogDirectory() {
     return ensureUserDataDir('logs');
 }
@@ -33,7 +49,11 @@ function sftpUploadDirectory() {
 }
 
 module.exports = {
+    commandSetDataPath,
+    credentialDataPath,
     ensureUserDataDir,
+    installDataPath,
+    licenseDataPath,
     scriptDataPath,
     sessionDataPath,
     sftpDownloadDirectory,

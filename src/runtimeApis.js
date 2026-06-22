@@ -1,8 +1,10 @@
 const SESSION_KEY = 'nexterm.preview.sessions';
 const FOLDER_KEY = 'nexterm.preview.sessionFolders';
 const SCRIPT_KEY = 'nexterm.preview.scripts';
+const COMMAND_SET_KEY = 'nexterm.preview.commandSets';
 const SETTINGS_KEY = 'nexterm.preview.settings';
 const KNOWN_HOSTS_KEY = 'nexterm.preview.knownHosts';
+const LICENSE_KEY = 'nexterm.preview.license';
 
 const PREVIEW_SETTINGS = {
     themeId: 'dark',
@@ -43,6 +45,25 @@ const PREVIEW_SETTINGS = {
     updateAutoCheckOnStartup: true,
     updateAutoDownload: false
 };
+
+function previewLicenseStatus() {
+    const now = Date.now();
+    const stored = readJson(LICENSE_KEY, null);
+    const startedAt = stored?.trialStartedAt || new Date(now).toISOString();
+    const trialExpiresAt = stored?.trialExpiresAt || new Date(Date.parse(startedAt) + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const next = {
+        status: stored?.license ? 'active' : Date.parse(trialExpiresAt) > now ? 'trial' : 'expired',
+        active: Boolean(stored?.license) || Date.parse(trialExpiresAt) > now,
+        machineId: stored?.machineId || 'preview-machine',
+        trialStartedAt: startedAt,
+        trialExpiresAt,
+        daysRemaining: Math.max(0, Math.ceil((Date.parse(trialExpiresAt) - now) / (24 * 60 * 60 * 1000))),
+        license: stored?.license || null,
+        msg: stored?.license ? '已激活' : '预览环境试用中'
+    };
+    writeJson(LICENSE_KEY, next);
+    return next;
+}
 
 const PREVIEW_SESSIONS = [
     {
@@ -115,6 +136,13 @@ function defaultPortForProtocol(protocol) {
     return PREVIEW_SETTINGS.defaultPort;
 }
 
+function sessionColorForProtocol(protocol) {
+    if (isLocalProtocol(protocol)) return 'green';
+    if (isSerialProtocol(protocol)) return 'violet';
+    if (protocol === 'ssh') return 'blue';
+    return 'amber';
+}
+
 function hasOwn(object, key) {
     return Object.prototype.hasOwnProperty.call(object || {}, key);
 }
@@ -149,6 +177,10 @@ function serialFlowControl(value) {
     return ['none', 'hardware', 'software'].includes(next) ? next : 'none';
 }
 
+function credentialSaveMode(value) {
+    return ['prompt', 'session', 'persist'].includes(value) ? value : 'prompt';
+}
+
 function normalizeSession(def = {}, existing = null) {
     const timestamp = nowIso();
     const protocol = def.protocol || existing?.protocol || PREVIEW_SETTINGS.defaultProtocol;
@@ -162,16 +194,19 @@ function normalizeSession(def = {}, existing = null) {
         type: 'session',
         resource: 'session',
         name: def.name || existing?.name || host || serialPath || (isLocal ? 'Local Shell' : ''),
+        color: sessionColorForProtocol(protocol),
         protocol,
         host: isSerial ? '' : host,
         port: isLocal || isSerial ? null : Number(def.port || existing?.port) || port,
         username: stringField(def, existing, 'username'),
         authType:
             def.authType || existing?.authType || (def.privateKeyPath || existing?.privateKeyPath ? 'key' : 'password'),
-        credentialSaveMode: def.credentialSaveMode || existing?.credentialSaveMode || 'prompt',
+        credentialSaveMode: credentialSaveMode(def.credentialSaveMode || existing?.credentialSaveMode),
         password: '',
+        hasSavedPassword: Boolean(def.hasSavedPassword ?? existing?.hasSavedPassword),
         privateKeyPath: stringField(def, existing, 'privateKeyPath'),
         passphrase: '',
+        hasSavedPassphrase: Boolean(def.hasSavedPassphrase ?? existing?.hasSavedPassphrase),
         shell: stringField(def, existing, 'shell'),
         cwd: stringField(def, existing, 'cwd'),
         serialPath,
@@ -207,6 +242,27 @@ function normalizeScript(def = {}, existing = null) {
     };
 }
 
+function normalizeCommandSetCommands(value) {
+    const list = Array.isArray(value) ? value : String(value || '').replace(/\r/g, '').split('\n');
+    return list.map(line => String(line || '').trimEnd()).filter(line => line.trim());
+}
+
+function normalizeCommandSet(def = {}, existing = null) {
+    const timestamp = nowIso();
+    const color = ['blue', 'green', 'amber', 'violet', 'rose', 'cyan'].includes(def.color || existing?.color)
+        ? def.color || existing?.color
+        : 'blue';
+    return {
+        id: def.id || existing?.id || `preview-command-set-${Date.now().toString(36)}`,
+        name: def.name?.trim() || existing?.name || '新建指令集',
+        color,
+        commands: normalizeCommandSetCommands(def.commands ?? existing?.commands ?? []),
+        description: String(def.description ?? existing?.description ?? ''),
+        createdAt: def.createdAt || existing?.createdAt || timestamp,
+        updatedAt: timestamp
+    };
+}
+
 function getPreviewSessions() {
     const stored = readJson(SESSION_KEY, null);
     if (Array.isArray(stored)) return stored.map(item => normalizeSession(item, item));
@@ -225,6 +281,13 @@ function getPreviewScripts() {
     const stored = readJson(SCRIPT_KEY, null);
     if (Array.isArray(stored)) return stored.map(item => normalizeScript(item, item));
     writeJson(SCRIPT_KEY, []);
+    return [];
+}
+
+function getPreviewCommandSets() {
+    const stored = readJson(COMMAND_SET_KEY, null);
+    if (Array.isArray(stored)) return stored.map(item => normalizeCommandSet(item, item));
+    writeJson(COMMAND_SET_KEY, []);
     return [];
 }
 
@@ -257,7 +320,7 @@ export function ensureRuntimeApis() {
         }
     };
 
-    if (window.sessionApi && window.terminalApi && window.settingsApi && window.sftpApi) return;
+    if (window.sessionApi && window.commandSetApi && window.terminalApi && window.settingsApi && window.sftpApi) return;
 
     const listeners = new Set();
     const timers = new Map();
@@ -277,6 +340,39 @@ export function ensureRuntimeApis() {
         },
         async selectLogDirectory() {
             return ok({ canceled: false, path: 'preview/userData/logs' });
+        }
+    };
+
+    window.licenseApi ||= {
+        async get() {
+            return ok(previewLicenseStatus());
+        },
+        async request() {
+            return ok({
+                version: 1,
+                productId: 'nexterm',
+                appVersion: 'preview',
+                machineId: previewLicenseStatus().machineId,
+                requestId: `preview-${Date.now().toString(36)}`,
+                createdAt: new Date().toISOString()
+            });
+        },
+        async exportRequest() {
+            return ok({ canceled: false, path: 'preview/activation-request.json', request: (await this.request()).data });
+        },
+        async importText(text = '') {
+            const license = JSON.parse(String(text || '{}'));
+            const current = previewLicenseStatus();
+            writeJson(LICENSE_KEY, { ...current, status: 'active', active: true, license });
+            return ok(previewLicenseStatus());
+        },
+        async importFile() {
+            return fail('预览环境不支持选择授权文件');
+        },
+        async remove() {
+            const current = previewLicenseStatus();
+            writeJson(LICENSE_KEY, { ...current, status: 'trial', active: true, license: null });
+            return ok(previewLicenseStatus());
         }
     };
 
@@ -440,6 +536,31 @@ export function ensureRuntimeApis() {
         }
     };
 
+    window.commandSetApi ||= {
+        async list() {
+            return ok(getPreviewCommandSets());
+        },
+        async save(def) {
+            const name = def?.name?.trim();
+            if (!name) return fail('指令集名称不能为空');
+            if (normalizeCommandSetCommands(def?.commands).length === 0) return fail('请至少填写一条指令');
+
+            const commandSets = getPreviewCommandSets();
+            const existing = commandSets.find(item => item.id === def.id);
+            const next = normalizeCommandSet({ ...def, name }, existing);
+            const index = commandSets.findIndex(item => item.id === next.id);
+            if (index >= 0) commandSets.splice(index, 1, next);
+            else commandSets.push(next);
+            writeJson(COMMAND_SET_KEY, commandSets);
+            return ok(next);
+        },
+        async remove(id) {
+            const commandSets = getPreviewCommandSets().filter(item => item.id !== id);
+            writeJson(COMMAND_SET_KEY, commandSets);
+            return ok();
+        }
+    };
+
     window.terminalApi ||= {
         async connect(options) {
             this.disconnect(options.sessionId);
@@ -458,10 +579,21 @@ export function ensureRuntimeApis() {
 
             const queue = [
                 window.setTimeout(() => {
+                    const credentialSaved =
+                        isSsh && options.credentialSaveMode === 'persist' && options.profileId
+                            ? {
+                                  profileId: options.profileId,
+                                  password: Boolean(options.password),
+                                  passphrase: Boolean(options.passphrase)
+                              }
+                            : null;
                     emit('terminal:status', {
                         sessionId: options.sessionId,
                         status: 'connected',
-                        msg: ''
+                        msg: '',
+                        ...(credentialSaved && (credentialSaved.password || credentialSaved.passphrase)
+                            ? { credentialSaved }
+                            : {})
                     });
                 }, 360),
                 window.setTimeout(() => {
@@ -521,7 +653,7 @@ export function ensureRuntimeApis() {
         },
         async runScript(payload = {}) {
             const output = String(payload.content || '').trim()
-                ? `\r\n[preview] Electron 环境中会执行脚本并把 stdout/stderr 写回终端。\r\n`
+                ? `\r\n[preview] Electron 环境中会执行脚本并把 stdout 写回终端，错误显示在任务状态里。\r\n`
                 : '';
             emit('script:task', { taskId: payload.taskId, sessionId: payload.sessionId, status: 'running' });
             if (output) emit('terminal:data', { sessionId: payload.sessionId, b64: toB64(output) });

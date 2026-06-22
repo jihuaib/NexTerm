@@ -327,6 +327,9 @@
         color: var(--nx-text-dim);
         font-size: 12px;
     }
+    .forward-empty svg {
+        color: var(--nx-icon);
+    }
     .forward-item {
         display: grid;
         gap: 7px;
@@ -373,12 +376,12 @@
         border: 1px solid var(--nx-border);
         border-radius: 6px;
         background: var(--nx-control-muted);
-        color: var(--nx-text);
+        color: var(--nx-icon);
         cursor: pointer;
     }
     .forward-item__actions button:hover {
         border-color: var(--nx-accent);
-        color: var(--nx-accent);
+        color: var(--nx-icon);
     }
     .forward-map {
         min-width: 0;

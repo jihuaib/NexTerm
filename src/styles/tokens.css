@@ -7,6 +7,7 @@
     --nx-text: #d4d4d4;
     --nx-text-dim: #8a8a8a;
     --nx-accent: #0a84ff;
+    --nx-icon: #0a84ff;
     --nx-accent-text: #ffffff;
     --nx-danger: #f14c4c;
     --nx-success: #2ecc71;
@@ -39,6 +40,7 @@
 }
 
 :root[data-theme='light'] {
+    --nx-icon: #0a84ff;
     --nx-titlebar-bg: #f7f7f7;
     --nx-rail-bg: #eeeeee;
     --nx-surface-raised: #fbfbfb;
@@ -61,6 +63,7 @@
 }
 
 :root[data-theme='solarized'] {
+    --nx-icon: #268bd2;
     --nx-titlebar-bg: #083946;
     --nx-rail-bg: #06323d;
     --nx-surface-raised: #0a4150;
@@ -83,6 +86,7 @@
 }
 
 :root[data-theme='monokai'] {
+    --nx-icon: #a6e22e;
     --nx-titlebar-bg: #35362f;
     --nx-rail-bg: #313229;
     --nx-surface-raised: #393a32;

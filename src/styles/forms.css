@@ -113,6 +113,19 @@
     border-color: var(--nx-accent);
     color: var(--nx-accent);
 }
+.nx-button.danger {
+    border-color: var(--nx-danger-border);
+    color: var(--nx-danger);
+}
+.nx-button.danger:hover {
+    background: var(--nx-danger-soft);
+    border-color: var(--nx-danger);
+    color: var(--nx-danger);
+}
+.nx-button svg {
+    flex-shrink: 0;
+    color: var(--nx-icon);
+}
 
 /* 步进器 */
 .nx-step {

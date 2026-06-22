@@ -9,6 +9,7 @@
             role="tab"
             :aria-selected="tab.value === modelValue"
             :title="tab.title || tab.label"
+            :style="tab.style || null"
             @click="$emit('update:modelValue', tab.value)"
         >
             <component :is="tab.icon" v-if="tab.icon" :size="15" :stroke-width="1.9" />
@@ -47,7 +48,8 @@
         border: 1px solid transparent;
         border-radius: 6px;
         background: transparent;
-        color: var(--nx-text-dim);
+        color: var(--segmented-tab-color, var(--nx-text-dim));
+        font-weight: 500;
         cursor: pointer;
         outline: none;
     }
@@ -56,13 +58,17 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+    .segmented-tabs__item svg {
+        flex-shrink: 0;
+        color: currentColor;
+    }
     .segmented-tabs__item:hover {
-        color: var(--nx-text);
+        color: var(--segmented-tab-color, var(--nx-text));
     }
     .segmented-tabs__item.active {
-        border-color: var(--nx-accent-border-soft);
-        background: var(--nx-surface);
-        color: var(--nx-text);
+        border-color: var(--segmented-tab-border, var(--nx-accent-border-soft));
+        background: var(--segmented-tab-bg, var(--nx-surface));
+        color: var(--segmented-tab-color, var(--nx-text));
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
     }
     .segmented-tabs__item:focus-visible {

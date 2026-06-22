@@ -8,11 +8,11 @@ import {
     createSessionResourceTree,
     defaultPortForProtocol,
     getSessionsForFolder,
+    getProtocolSessionColor,
     isLocalSessionProtocol,
     isSerialSessionProtocol,
     isSshSessionProtocol,
     normalizeCredentialSaveMode,
-    normalizeSessionColor,
     normalizeSerialBoolean,
     normalizeSerialFlowControl,
     normalizeSerialNumber,
@@ -27,14 +27,21 @@ import {
     findSession,
     genId,
     getLeafSessions,
+    insertSessionIntoLeaf,
     makeLeaf,
     removeLeaf,
     removeSessionFromLeaf,
+    reorderSessionInLeaf,
     setLeafActiveSession,
     splitLeaf
 } from './layout';
 import { disposeTerminalView } from './services/terminalViews';
+import { normalizeCommandSet, normalizeCommandSetCommands } from './services/commandSets';
 import { createScriptTaskId, DEFAULT_SCRIPT_LANGUAGE, getScriptLanguage } from './services/terminalScriptRunner';
+import {
+    createDefaultTerminalHighlightRules,
+    mergeMissingDefaultTerminalHighlightRules
+} from './services/terminalHighlightRules';
 import { eventBus } from './utils/eventBus';
 
 export { ALL_SESSIONS_FOLDER_ID, UNGROUPED_FOLDER_ID };
@@ -76,11 +83,14 @@ export const DEFAULT_SETTINGS = {
     terminalSelectToCopy: false,
     terminalRightClickAction: 'paste',
     terminalContextMenuTrigger: 'shift',
+    terminalHighlightEnabled: true,
+    terminalHighlightRules: createDefaultTerminalHighlightRules(),
     updateAutoCheckOnStartup: true,
     updateAutoDownload: false
 };
 
 const rootLeaf = makeLeaf(null);
+let runtimeSessionSeq = 0;
 const initialSessionTree = createSessionResourceTree();
 
 // 简单的全局响应式状态（基础版无需 Vuex）
@@ -92,8 +102,16 @@ export const store = reactive({
     fileTree: createDefaultFileResourceTree(),
     selectedFileNodeId: FILE_ROOT_ID,
     scripts: [],
+    commandSets: [],
     scriptTasks: [],
     portForwards: [],
+    license: {
+        status: 'loading',
+        active: true,
+        machineId: '',
+        daysRemaining: null,
+        msg: '授权状态读取中'
+    },
     layout: rootLeaf, // Tab Group 分屏布局树
     activePaneId: rootLeaf.id, // 当前聚焦的 Tab Group id
     settings: { ...DEFAULT_SETTINGS },
@@ -123,6 +141,17 @@ function normalizeScript(def = {}) {
         description: String(def.description || ''),
         createdAt: def.createdAt || '',
         updatedAt: def.updatedAt || ''
+    };
+}
+
+function toPlainCommandSetPayload(def = {}) {
+    const commandSet = normalizeCommandSet(def);
+    return {
+        id: commandSet.id || undefined,
+        name: commandSet.name,
+        color: commandSet.color,
+        commands: commandSet.commands,
+        description: commandSet.description
     };
 }
 
@@ -166,8 +195,9 @@ function makeRuntimeSession(def) {
     return {
         profileId: def.id || null,
         sessionId: genRuntimeId(),
+        runtimeOrder: ++runtimeSessionSeq,
         name: def.name || def.host || serialPath || (isLocal ? 'Local Shell' : ''),
-        color: normalizeSessionColor(def.color),
+        color: getProtocolSessionColor(protocol),
         host: isSerial ? '' : def.host || '',
         port: isLocal || isSerial ? null : Number(def.port) || port,
         protocol,
@@ -175,8 +205,10 @@ function makeRuntimeSession(def) {
         authType: def.authType || (def.privateKeyPath ? 'key' : 'password'),
         credentialSaveMode: isLocal ? 'prompt' : normalizeCredentialSaveMode(def.credentialSaveMode),
         password: def.password || '',
+        hasSavedPassword: Boolean(def.hasSavedPassword),
         privateKeyPath: def.privateKeyPath || '',
         passphrase: def.passphrase || '',
+        hasSavedPassphrase: Boolean(def.hasSavedPassphrase),
         shell: def.shell || '',
         cwd: def.cwd || '',
         serialPath,
@@ -230,14 +262,26 @@ function removeEmptyGroupIfNeeded(layout, paneId) {
 // ---------- 设置 / 主题 ----------
 export async function loadSettings() {
     const res = await window.settingsApi.get();
-    if (res.status === 'success') Object.assign(store.settings, res.data);
+    if (res.status === 'success') {
+        const data = { ...res.data };
+        data.terminalHighlightEnabled = data.terminalHighlightEnabled !== false;
+        data.terminalHighlightRules = mergeMissingDefaultTerminalHighlightRules(data.terminalHighlightRules);
+        Object.assign(store.settings, data);
+    }
     applyAppTheme(store.settings.themeId);
 }
 
 export async function updateSettings(patch) {
-    Object.assign(store.settings, patch);
-    if ('themeId' in patch) applyAppTheme(store.settings.themeId);
-    await window.settingsApi.save(patch);
+    const nextPatch = { ...patch };
+    if ('terminalHighlightEnabled' in nextPatch) {
+        nextPatch.terminalHighlightEnabled = nextPatch.terminalHighlightEnabled !== false;
+    }
+    if ('terminalHighlightRules' in nextPatch) {
+        nextPatch.terminalHighlightRules = mergeMissingDefaultTerminalHighlightRules(nextPatch.terminalHighlightRules);
+    }
+    Object.assign(store.settings, nextPatch);
+    if ('themeId' in nextPatch) applyAppTheme(store.settings.themeId);
+    await window.settingsApi.save(nextPatch);
 }
 
 export function openSettings() {
@@ -245,6 +289,27 @@ export function openSettings() {
 }
 export function closeSettings() {
     store.settingsOpen = false;
+}
+
+// ---------- 授权 / 试用 ----------
+export async function loadLicenseStatus() {
+    if (!window.licenseApi?.get) {
+        store.license = {
+            status: 'trial',
+            active: true,
+            machineId: '',
+            daysRemaining: 30,
+            msg: '预览环境试用中'
+        };
+        return store.license;
+    }
+    const res = await window.licenseApi.get();
+    if (res.status === 'success') store.license = res.data;
+    return store.license;
+}
+
+export async function refreshLicenseStatus() {
+    return loadLicenseStatus();
 }
 
 // ---------- 会话定义管理 ----------
@@ -275,7 +340,7 @@ function toPlainSessionPayload(def = {}) {
     return {
         id: def.id || undefined,
         name: String(def.name || '').trim(),
-        color: normalizeSessionColor(def.color),
+        color: getProtocolSessionColor(protocol),
         folderId: normalizeSessionFolderId(def.folderId),
         protocol,
         host: isLocal || isSerial ? '' : String(def.host || '').trim(),
@@ -284,8 +349,10 @@ function toPlainSessionPayload(def = {}) {
         authType,
         credentialSaveMode: isSsh ? normalizeCredentialSaveMode(def.credentialSaveMode) : 'prompt',
         password: '',
+        hasSavedPassword: false,
         privateKeyPath: isSsh && authType === 'key' ? String(def.privateKeyPath || '').trim() : '',
         passphrase: '',
+        hasSavedPassphrase: false,
         shell: isLocal ? String(def.shell || '').trim() : '',
         cwd: isLocal ? String(def.cwd || '').trim() : '',
         serialPath: isSerial ? String(def.serialPath || '').trim() : '',
@@ -412,6 +479,37 @@ export async function exportScripts(ids = []) {
     return window.scriptApi.exportScripts(ids);
 }
 
+// ---------- 指令集 ----------
+export async function loadCommandSets() {
+    if (!window.commandSetApi?.list) return;
+    const res = await window.commandSetApi.list();
+    if (res.status === 'success') store.commandSets = res.data.map(normalizeCommandSet);
+}
+
+export async function saveCommandSet(def) {
+    if (!window.commandSetApi?.save) return { status: 'error', msg: '当前环境不支持指令集', data: null };
+    const res = await window.commandSetApi.save(toPlainCommandSetPayload(def));
+    if (res.status === 'success') await loadCommandSets();
+    return res;
+}
+
+export async function deleteCommandSet(id) {
+    if (!window.commandSetApi?.remove) return { status: 'error', msg: '当前环境不支持删除指令集', data: null };
+    const res = await window.commandSetApi.remove(id);
+    if (res.status === 'success') await loadCommandSets();
+    return res;
+}
+
+export function sendCommandSetToSession(commandSet, sessionId) {
+    const session = findSession(store.layout, sessionId);
+    if (!session) return { status: 'error', msg: '当前控制台不存在', data: null };
+    if (session.status !== 'connected') return { status: 'error', msg: '当前控制台未连接', data: null };
+    const commands = normalizeCommandSetCommands(commandSet?.commands);
+    if (!commands.length) return { status: 'error', msg: '指令集没有可发送的命令', data: null };
+    window.terminalApi.sendInput(sessionId, `${commands.join('\n')}\n`);
+    return { status: 'success', msg: '指令已发送', data: { count: commands.length } };
+}
+
 // ---------- 端口转发 ----------
 export async function loadPortForwards() {
     if (!window.portForwardApi?.list) return;
@@ -534,6 +632,8 @@ function createScriptTask(script, session, taskId) {
         sessionName: session.name || session.host || session.sessionId,
         status: 'running',
         exitCode: null,
+        msg: '',
+        errorDetail: '',
         startedAt: nowIso(),
         finishedAt: ''
     };
@@ -644,18 +744,43 @@ function handleScriptTaskEvent(payload = {}) {
     if (payload.status === 'running') {
         task.status = 'running';
         task.exitCode = null;
+        task.msg = '';
+        task.errorDetail = '';
         task.finishedAt = '';
         return;
     }
     if (payload.status === 'completed' || payload.status === 'failed' || payload.status === 'stopped') {
         task.status = payload.status;
         task.exitCode = payload.exitCode ?? task.exitCode;
+        task.msg = payload.msg || '';
+        task.errorDetail = payload.details || '';
         task.finishedAt = nowIso();
     }
 }
 
 function handleScriptTerminalStatus(payload = {}) {
     if (!payload.sessionId) return;
+    if (payload.credentialSaved?.profileId) {
+        const saved = payload.credentialSaved;
+        const profile = store.sessions.find(session => session.id === saved.profileId);
+        let profileChanged = false;
+        if (profile) {
+            if (saved.password && !profile.hasSavedPassword) {
+                profile.hasSavedPassword = true;
+                profileChanged = true;
+            }
+            if (saved.passphrase && !profile.hasSavedPassphrase) {
+                profile.hasSavedPassphrase = true;
+                profileChanged = true;
+            }
+        }
+        collectRuntimeSessions().forEach(item => {
+            if (item.session.profileId !== saved.profileId) return;
+            if (saved.password) item.session.hasSavedPassword = true;
+            if (saved.passphrase) item.session.hasSavedPassphrase = true;
+        });
+        if (profileChanged) rebuildSessionTree();
+    }
     if (payload.status !== 'closed' && payload.status !== 'error') return;
     store.scriptTasks.forEach(task => {
         if (task.sessionId !== payload.sessionId || !taskIsActive(task)) return;
@@ -743,6 +868,34 @@ export function moveOpenSessionIntoPane(targetPaneId, payload, zone) {
     }
 
     store.layout = addSessionToLeaf(nextLayout, currentTarget.id, session);
+    store.activePaneId = currentTarget.id;
+}
+
+export function moveOpenSessionToTabPosition(targetPaneId, payload, targetSessionId, position) {
+    const source = findLeaf(store.layout, payload.sourcePaneId);
+    const target = findLeaf(store.layout, targetPaneId);
+    const session = findSession(store.layout, payload.sessionId);
+    if (!source || !target || !session || session.sessionId === targetSessionId) return;
+
+    const targetSessions = getLeafSessions(target);
+    const targetIndex = targetSessions.findIndex(item => item.sessionId === targetSessionId);
+    if (targetIndex < 0) return;
+
+    const targetInsertIndex = position === 'after' ? targetIndex + 1 : targetIndex;
+
+    if (source.id === target.id) {
+        const sourceIndex = targetSessions.findIndex(item => item.sessionId === session.sessionId);
+        if (sourceIndex < 0) return;
+        const adjustedIndex = sourceIndex < targetInsertIndex ? targetInsertIndex - 1 : targetInsertIndex;
+        store.layout = reorderSessionInLeaf(store.layout, target.id, session.sessionId, adjustedIndex);
+        store.activePaneId = target.id;
+        return;
+    }
+
+    let nextLayout = removeSessionFromLeaf(store.layout, source.id, session.sessionId);
+    nextLayout = removeEmptyGroupIfNeeded(nextLayout, source.id);
+    const currentTarget = findLeaf(nextLayout, targetPaneId) || findFirstLeaf(nextLayout);
+    store.layout = insertSessionIntoLeaf(nextLayout, currentTarget.id, session, targetInsertIndex);
     store.activePaneId = currentTarget.id;
 }
 

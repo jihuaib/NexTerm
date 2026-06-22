@@ -6,6 +6,7 @@ import LogsSection from '../components/settings/LogsSection.vue';
 import ScriptsSection from '../components/settings/ScriptsSection.vue';
 import ShortcutsSection from '../components/settings/ShortcutsSection.vue';
 import UpdateSection from '../components/settings/UpdateSection.vue';
+import LicenseSection from '../components/settings/LicenseSection.vue';
 import AboutSection from '../components/settings/AboutSection.vue';
 import {
     FileCode,
@@ -13,6 +14,7 @@ import {
     FolderOpen,
     Info,
     Keyboard,
+    KeyRound,
     Network,
     Palette,
     RefreshCw,
@@ -29,5 +31,6 @@ export const SETTINGS_CATEGORIES = [
     { id: 'scripts', label: '脚本', desc: 'term API 与执行语法', icon: FileCode, component: ScriptsSection },
     { id: 'logs', label: '日志', desc: '终端缓冲区日志写入与格式', icon: FileText, component: LogsSection },
     { id: 'update', label: '更新', desc: '版本检查、下载与安装', icon: RefreshCw, component: UpdateSection },
+    { id: 'license', label: '授权', desc: '试用期、离线激活与授权文件', icon: KeyRound, component: LicenseSection },
     { id: 'about', label: '关于', desc: '版本与后续能力规划', icon: Info, component: AboutSection }
 ];

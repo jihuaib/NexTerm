@@ -2,12 +2,17 @@ const fs = require('fs');
 const path = require('path');
 const { successResponse, errorResponse } = require('../utils/responseUtils');
 const { sessionDataPath } = require('../utils/appPaths');
+const CredentialStore = require('../utils/credentialStore');
 
 const STORE_KEY = 'sessions';
 const FOLDER_STORE_KEY = 'sessionFolders';
 const DATA_VERSION = 1;
-const DEFAULT_SESSION_COLOR = 'blue';
-const SESSION_COLORS = new Set(['blue', 'green', 'amber', 'rose', 'violet', 'slate']);
+const PROTOCOL_SESSION_COLORS = {
+    ssh: 'blue',
+    telnet: 'amber',
+    serial: 'violet',
+    local: 'green'
+};
 
 function nowIso() {
     return new Date().toISOString();
@@ -33,13 +38,15 @@ function defaultPortForProtocol(protocol) {
 }
 
 function normalizeCredentialSaveMode(value) {
-    if (value === 'session' || value === 'prompt') return value;
+    if (value === 'persist' || value === 'session' || value === 'prompt') return value;
     return 'prompt';
 }
 
-function normalizeSessionColor(value) {
-    const next = String(value || '').trim();
-    return SESSION_COLORS.has(next) ? next : DEFAULT_SESSION_COLOR;
+function sessionColorForProtocol(protocol) {
+    if (isLocalProtocol(protocol)) return PROTOCOL_SESSION_COLORS.local;
+    if (isSerialProtocol(protocol)) return PROTOCOL_SESSION_COLORS.serial;
+    if (protocol === 'ssh') return PROTOCOL_SESSION_COLORS.ssh;
+    return PROTOCOL_SESSION_COLORS.telnet;
 }
 
 function hasOwn(object, key) {
@@ -103,7 +110,7 @@ function normalizeSession(def = {}, existing = null) {
         type: 'session',
         resource: 'session',
         name: (def.name && def.name.trim()) || existing?.name || host || serialPath || (isLocal ? 'Local Shell' : ''),
-        color: normalizeSessionColor(hasOwn(def, 'color') ? def.color : existing?.color),
+        color: sessionColorForProtocol(protocol),
         protocol,
         host: isSerial ? '' : host,
         port: isLocal || isSerial ? null : Number(def.port || existing?.port) || port,
@@ -134,11 +141,14 @@ function normalizeSession(def = {}, existing = null) {
     };
 }
 
-function publicSession(session = {}) {
+function publicSession(session = {}, credentialStore = null) {
+    const normalized = normalizeSession(session, session);
     return {
-        ...normalizeSession(session, session),
+        ...normalized,
         password: '',
-        passphrase: ''
+        passphrase: '',
+        hasSavedPassword: Boolean(credentialStore?.has(normalized.id, 'password')),
+        hasSavedPassphrase: Boolean(credentialStore?.has(normalized.id, 'passphrase'))
     };
 }
 
@@ -207,8 +217,9 @@ class UserDataSessionStore {
  * 文件夹结构：{ id, type, resource, name, parentId, sort, createdAt, updatedAt }
  */
 class SessionApp {
-    constructor(ipcMain) {
+    constructor(ipcMain, credentialStore = null) {
         this.store = new UserDataSessionStore();
+        this.credentialStore = credentialStore || new CredentialStore();
         ipcMain.handle('session:list', this.handleList.bind(this));
         ipcMain.handle('session:save', this.handleSave.bind(this));
         ipcMain.handle('session:remove', this.handleRemove.bind(this));
@@ -220,7 +231,7 @@ class SessionApp {
 
     handleList() {
         try {
-            const list = this.store.get(STORE_KEY, []).map(publicSession);
+            const list = this.store.get(STORE_KEY, []).map(session => publicSession(session, this.credentialStore));
             return successResponse(list, '获取会话列表成功');
         } catch (err) {
             return errorResponse('获取会话列表失败: ' + err.message);
@@ -238,14 +249,24 @@ class SessionApp {
             const list = this.store.get(STORE_KEY, []);
             const existing = list.find(s => s.id === def.id) || null;
             const session = normalizeSession(def, existing);
+            this.cleanupCredentialsForSession(session);
             const idx = list.findIndex(s => s.id === session.id);
             if (idx >= 0) list[idx] = session;
             else list.push(session);
             this.store.set(STORE_KEY, list);
-            return successResponse(publicSession(session), '会话已保存');
+            return successResponse(publicSession(session, this.credentialStore), '会话已保存');
         } catch (err) {
             return errorResponse('保存会话失败: ' + err.message);
         }
+    }
+
+    cleanupCredentialsForSession(session) {
+        if (!session?.id || session.protocol !== 'ssh' || session.credentialSaveMode !== 'persist') {
+            this.credentialStore.removeProfile(session?.id);
+            return;
+        }
+        if (session.authType !== 'password') this.credentialStore.remove(session.id, 'password');
+        if (session.authType !== 'key') this.credentialStore.remove(session.id, 'passphrase');
     }
 
     handleRemove(_event, id) {
@@ -253,6 +274,7 @@ class SessionApp {
             const current = this.store.get(STORE_KEY, []);
             const list = current.filter(s => s.id !== id);
             this.store.set(STORE_KEY, list);
+            this.credentialStore.removeProfile(id);
             return successResponse(null, '会话已删除');
         } catch (err) {
             return errorResponse('删除会话失败: ' + err.message);
@@ -322,7 +344,7 @@ class SessionApp {
 
             list[idx] = normalizeSession({ ...list[idx], folderId: payload.folderId || null }, list[idx]);
             this.store.set(STORE_KEY, list);
-            return successResponse(publicSession(list[idx]), '会话已移动');
+            return successResponse(publicSession(list[idx], this.credentialStore), '会话已移动');
         } catch (err) {
             return errorResponse('移动会话失败: ' + err.message);
         }

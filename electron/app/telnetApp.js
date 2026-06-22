@@ -11,11 +11,15 @@ const TerminalLogWriter = require('../utils/terminalLogWriter');
  * 终端连接编排：在主进程内按协议管理多会话
  */
 class TelnetApp {
-    constructor(ipcMain, dispatcher, store) {
+    constructor(ipcMain, dispatcher, store, credentialStore = null) {
         this.dispatcher = dispatcher;
         this.routes = new Map(); // sessionId -> local | telnet
+        this.pendingCredentials = new Map();
+        this.credentialStore = credentialStore;
         this.terminalLogWriter = new TerminalLogWriter(store);
         this.emit = (type, data) => {
+            const payload = data && typeof data === 'object' ? { ...data } : data;
+            this.handleCredentialStatus(type, payload);
             if (type === TERMINAL_EVT.DATA && data?.sessionId && data?.b64) {
                 this.terminalLogWriter.writeOutput(data.sessionId, data.b64);
             }
@@ -26,7 +30,7 @@ class TelnetApp {
             if (type === TERMINAL_EVT.STATUS && data?.status === TERMINAL_STATUS.ERROR) {
                 this.terminalLogWriter.closeSession(data.sessionId);
             }
-            this.dispatcher.emit(type, data);
+            this.dispatcher.emit(type, payload);
         };
         this.telnetManager = new TelnetManager(this.emit);
         this.shellManager = new ShellManager(this.emit);
@@ -60,6 +64,58 @@ class TelnetApp {
         return protocol === 'local' ? this.shellManager : this.telnetManager;
     }
 
+    readSavedCredential(options = {}, kind = 'password') {
+        if (options.credentialSaveMode !== 'persist' || !options.profileId || !this.credentialStore) return '';
+        return this.credentialStore.get(options.profileId, kind);
+    }
+
+    hydrateSshCredentials(options = {}) {
+        if (options.protocol !== 'ssh' || options.credentialSaveMode !== 'persist') return;
+        const authType = options.authType || (options.privateKeyPath ? 'key' : 'password');
+        if (authType === 'password' && !options.password) {
+            options.password = this.readSavedCredential(options, 'password');
+        }
+        if (authType === 'key' && !options.passphrase) {
+            options.passphrase = this.readSavedCredential(options, 'passphrase');
+        }
+    }
+
+    collectPendingCredential(options = {}) {
+        if (options.protocol !== 'ssh' || options.credentialSaveMode !== 'persist' || !options.profileId) return null;
+        const authType = options.authType || (options.privateKeyPath ? 'key' : 'password');
+        const pending = { profileId: options.profileId };
+        if (authType === 'password' && options.password) pending.password = String(options.password);
+        if (authType === 'key' && options.passphrase) pending.passphrase = String(options.passphrase);
+        return pending.password || pending.passphrase ? pending : null;
+    }
+
+    handleCredentialStatus(type, payload = {}) {
+        if (type !== TERMINAL_EVT.STATUS || !payload?.sessionId) return;
+        const pending = this.pendingCredentials.get(payload.sessionId);
+        if (!pending) return;
+        if (payload.status === TERMINAL_STATUS.ERROR || payload.status === TERMINAL_STATUS.CLOSED) {
+            this.pendingCredentials.delete(payload.sessionId);
+            return;
+        }
+        if (payload.status !== TERMINAL_STATUS.CONNECTED) return;
+
+        this.pendingCredentials.delete(payload.sessionId);
+        const saved = { profileId: pending.profileId };
+        let error = '';
+        if (pending.password) {
+            const res = this.credentialStore?.save(pending.profileId, 'password', pending.password);
+            if (res?.ok) saved.password = true;
+            else error = res?.msg || 'SSH 密码保存失败';
+        }
+        if (pending.passphrase) {
+            const res = this.credentialStore?.save(pending.profileId, 'passphrase', pending.passphrase);
+            if (res?.ok) saved.passphrase = true;
+            else error = error || res?.msg || 'SSH 私钥口令保存失败';
+        }
+        if (saved.password || saved.passphrase) payload.credentialSaved = saved;
+        if (error) payload.credentialSaveError = error;
+    }
+
     async handleSerialPorts() {
         try {
             const ports = await this.serialManager.listPorts();
@@ -82,7 +138,12 @@ class TelnetApp {
             }
 
             const connectOptions = { ...options };
+            this.hydrateSshCredentials(connectOptions);
+            const pendingCredential = this.collectPendingCredential(connectOptions);
+            if (pendingCredential) this.pendingCredentials.set(connectOptions.sessionId, pendingCredential);
+            else this.pendingCredentials.delete(connectOptions.sessionId);
             const result = this.getManager(protocol).connect(connectOptions);
+            if (!result.ok) this.pendingCredentials.delete(connectOptions.sessionId);
             if (!result.ok) return errorResponse(result.msg || '连接失败');
             this.terminalLogWriter.registerSession(connectOptions, protocol);
             this.routes.set(options.sessionId, protocol);

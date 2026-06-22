@@ -86,7 +86,19 @@
                     >
                         <CircleStop :size="13" :stroke-width="2" />
                     </button>
+                    <button
+                        v-if="task.errorDetail"
+                        type="button"
+                        title="错误详情"
+                        @click="openTaskDetail(task)"
+                    >
+                        <FileText :size="13" :stroke-width="2" />
+                    </button>
+                    <button type="button" title="删除任务" @click="removeTask(task)">
+                        <Trash2 :size="13" :stroke-width="2" />
+                    </button>
                 </div>
+                <div v-if="task.msg" class="task-msg" :title="task.msg">{{ task.msg }}</div>
             </article>
         </section>
 
@@ -109,6 +121,10 @@
             <button type="button" :disabled="!canRerunContextTask" @click="rerunContextTask">
                 <RotateCw :size="14" :stroke-width="1.9" />
                 <span>再次执行</span>
+            </button>
+            <button type="button" :disabled="!contextTask?.errorDetail" @click="showContextTaskDetail">
+                <FileText :size="14" :stroke-width="1.9" />
+                <span>错误详情</span>
             </button>
             <button type="button" :disabled="!contextTask" class="danger-menu-item" @click="deleteContextTask">
                 <Trash2 :size="14" :stroke-width="1.9" />
@@ -182,12 +198,26 @@
                 <button class="primary" type="button" :disabled="!canRun" @click="confirmRunScript">执行</button>
             </template>
         </BaseDialog>
+
+        <BaseDialog
+            v-if="taskDetailVisible"
+            title="错误详情"
+            :subtitle="taskDetailTask?.scriptName || ''"
+            width="640px"
+            @close="closeTaskDetail"
+        >
+            <pre class="task-detail">{{ taskDetailText }}</pre>
+
+            <template #footer>
+                <button class="ghost" type="button" @click="closeTaskDetail">关闭</button>
+            </template>
+        </BaseDialog>
     </div>
 </template>
 
 <script setup>
     import { computed, reactive, ref, watch } from 'vue';
-    import { CircleStop, Download, Pause, Pencil, Play, Plus, RotateCw, Trash2, Upload } from '@lucide/vue';
+    import { CircleStop, Download, FileText, Pause, Pencil, Play, Plus, RotateCw, Trash2, Upload } from '@lucide/vue';
     import {
         deleteScript,
         deleteScriptTask,
@@ -212,6 +242,7 @@
     const targetSessionId = ref('');
     const scriptDialogVisible = ref(false);
     const runDialogVisible = ref(false);
+    const taskDetailTaskId = ref('');
     const scriptForm = reactive(defaultScript());
     const scriptMenu = reactive({ visible: false, x: 0, y: 0, scriptId: '' });
     const taskMenu = reactive({ visible: false, x: 0, y: 0, taskId: '' });
@@ -219,6 +250,9 @@
     const selectedScript = computed(() => store.scripts.find(script => script.id === selectedScriptId.value) || null);
     const contextScript = computed(() => store.scripts.find(script => script.id === scriptMenu.scriptId) || null);
     const contextTask = computed(() => store.scriptTasks.find(task => task.id === taskMenu.taskId) || null);
+    const taskDetailVisible = computed(() => Boolean(taskDetailTaskId.value));
+    const taskDetailTask = computed(() => store.scriptTasks.find(task => task.id === taskDetailTaskId.value) || null);
+    const taskDetailText = computed(() => taskDetailTask.value?.errorDetail || taskDetailTask.value?.msg || '');
     const connectedSessions = computed(() => getConnectedSessions());
     const canRunContextScript = computed(() => canRunScript(contextScript.value));
     const canRerunContextTask = computed(() => {
@@ -424,6 +458,21 @@
         const task = contextTask.value;
         closeMenus();
         await removeTask(task);
+    }
+
+    function openTaskDetail(task) {
+        if (!task?.errorDetail) return;
+        closeMenus();
+        taskDetailTaskId.value = task.id;
+    }
+
+    function showContextTaskDetail() {
+        if (!contextTask.value?.errorDetail) return;
+        openTaskDetail(contextTask.value);
+    }
+
+    function closeTaskDetail() {
+        taskDetailTaskId.value = '';
     }
 
     async function rerunContextTask() {
@@ -678,7 +727,7 @@
     }
     .task-actions {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(24px, 1fr));
         gap: 5px;
     }
     .task-actions button {
@@ -689,16 +738,39 @@
         border: 1px solid var(--nx-border);
         border-radius: 6px;
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
         cursor: pointer;
     }
     .task-actions button:hover {
         border-color: var(--nx-accent);
-        color: var(--nx-accent);
+        color: var(--nx-icon);
     }
     .task-actions button:disabled {
         cursor: not-allowed;
         opacity: 0.42;
+    }
+    .task-msg {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--nx-danger);
+        font-family: var(--nx-font-mono);
+        font-size: 11px;
+    }
+    .task-detail {
+        max-height: 360px;
+        margin: 0;
+        padding: 14px;
+        overflow: auto;
+        border-top: 1px solid var(--nx-border);
+        background: var(--nx-bg);
+        color: var(--nx-text);
+        font-family: var(--nx-font-mono);
+        font-size: 12px;
+        line-height: 1.5;
+        user-select: text;
+        white-space: pre-wrap;
     }
     :deep(.danger-menu-item) {
         color: var(--nx-danger);

@@ -1,5 +1,5 @@
 const { test, expect, _electron: electron } = require('@playwright/test');
-const { generateKeyPairSync } = require('crypto');
+const { generateKeyPairSync, sign } = require('crypto');
 const dgram = require('dgram');
 const fs = require('fs/promises');
 const net = require('net');
@@ -8,6 +8,36 @@ const path = require('path');
 const { startTestSshServer } = require('./helpers/sshServer.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function stableStringify(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value)
+            .sort()
+            .map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+            .join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function signedTestLicense(privateKey, machineId) {
+    const payload = {
+        version: 1,
+        productId: 'nexterm',
+        licenseId: 'lic-e2e',
+        subject: 'E2E User',
+        edition: 'Pro',
+        features: ['*'],
+        machineId,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    return {
+        ...payload,
+        signature: sign(null, Buffer.from(stableStringify(payload)), privateKey).toString('base64')
+    };
+}
 
 function localShellPath() {
     if (process.platform === 'win32') return process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
@@ -25,6 +55,28 @@ async function pathExists(target) {
     } catch (_err) {
         return false;
     }
+}
+
+async function writeExpiredTrial(userDataDir) {
+    const now = Date.now();
+    const trialStartedAt = new Date(now - 31 * DAY_MS).toISOString();
+    const licensePath = path.join(userDataDir, 'data', 'license.json');
+    await fs.mkdir(path.dirname(licensePath), { recursive: true });
+    await fs.writeFile(
+        licensePath,
+        JSON.stringify(
+            {
+                version: 1,
+                trialStartedAt,
+                trialExpiresAt: new Date(now + 365 * DAY_MS).toISOString(),
+                lastSeenAt: new Date(now - DAY_MS).toISOString(),
+                license: null
+            },
+            null,
+            2
+        ) + '\n',
+        'utf8'
+    );
 }
 
 async function writeTestPrivateKey(homeDir) {
@@ -226,9 +278,7 @@ async function closeElectronApp(electronApp) {
     await Promise.race([electronApp.close().catch(() => {}), new Promise(resolve => setTimeout(resolve, 1000))]);
 }
 
-test.beforeEach(async ({}, testInfo) => {
-    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nexterm-e2e-user-data-'));
-    const shellCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'nexterm-e2e-shell-'));
+async function launchTestElectronApp(userDataDir, licensePublicKey) {
     const electronApp = await electron.launch({
         args: ['.'],
         cwd: ROOT,
@@ -239,6 +289,7 @@ test.beforeEach(async ({}, testInfo) => {
             NEXTERM_DISABLE_DEVTOOLS: '1',
             NEXTERM_SERIAL_MOCK: '1',
             NEXTERM_SERIAL_MOCK_PORTS: JSON.stringify([mockSerialPath()]),
+            NEXTERM_LICENSE_PUBLIC_KEY: licensePublicKey,
             NEXTERM_USER_DATA_DIR: userDataDir,
             HOME: userDataDir,
             USERPROFILE: userDataDir
@@ -248,13 +299,25 @@ test.beforeEach(async ({}, testInfo) => {
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByText('NexTerm')).toBeVisible();
     await expect(page.locator('.brand__mark')).toHaveAttribute('src', /icon-.*\.svg/);
+    return { electronApp, page };
+}
 
-    testInfo.e2e = { electronApp, page, userDataDir, shellCwd, consoleErrors: [], cleanups: [] };
-
+function trackPageErrors(page, ctx) {
     page.on('console', msg => {
-        if (msg.type() === 'error') testInfo.e2e.consoleErrors.push(msg.text());
+        if (msg.type() === 'error') ctx.consoleErrors.push(msg.text());
     });
-    page.on('pageerror', err => testInfo.e2e.consoleErrors.push(err.message));
+    page.on('pageerror', err => ctx.consoleErrors.push(err.message));
+}
+
+test.beforeEach(async ({}, testInfo) => {
+    const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nexterm-e2e-user-data-'));
+    const shellCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'nexterm-e2e-shell-'));
+    const licenseKeys = generateKeyPairSync('ed25519');
+    const licensePublicKey = licenseKeys.publicKey.export({ type: 'spki', format: 'pem' });
+    const { electronApp, page } = await launchTestElectronApp(userDataDir, licensePublicKey);
+
+    testInfo.e2e = { electronApp, page, userDataDir, shellCwd, licenseKeys, licensePublicKey, consoleErrors: [], cleanups: [] };
+    trackPageErrors(page, testInfo.e2e);
 });
 
 test.afterEach(async ({}, testInfo) => {
@@ -316,8 +379,54 @@ async function dragElementBy(page, locator, deltaX, deltaY) {
     await page.mouse.up();
 }
 
+test('unactivated app is blocked after the 30 day trial limit', async ({}, testInfo) => {
+    const { page, userDataDir } = testInfo.e2e;
+
+    await writeExpiredTrial(userDataDir);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('NexTerm')).toBeVisible();
+    await expect(page.locator('.license-pill')).toContainText('需激活');
+
+    const lock = page.locator('.license-lock');
+    await expect(lock).toBeVisible();
+    await expect(lock).toContainText('试用已到期');
+    await expect(lock).toContainText('试用已到期，请导入授权文件');
+
+    await lock.getByRole('button', { name: '打开授权设置' }).click();
+    await expect(settingsPanel(page)).toBeVisible();
+    await chooseSettingsCategory(page, '授权');
+    await expect(settingsPanel(page).getByText('试用已到期').first()).toBeVisible();
+    await expect(row(page, '机器码').locator('input')).toHaveValue(/^[a-f0-9]{64}$/);
+    await expect(settingsPanel(page).locator('.license-summary__item').filter({ hasText: '试用剩余' }).locator('strong')).toHaveText(
+        '0 天'
+    );
+});
+
+test('machine id is persisted across app restarts', async ({}, testInfo) => {
+    const ctx = testInfo.e2e;
+
+    await openSettings(ctx.page);
+    await chooseSettingsCategory(ctx.page, '授权');
+    const machineId = await row(ctx.page, '机器码').locator('input').inputValue();
+    expect(machineId).toMatch(/^[a-f0-9]{64}$/);
+    const installData = JSON.parse(await fs.readFile(path.join(ctx.userDataDir, 'data', 'install.json'), 'utf8'));
+    expect(installData.machineId).toBe(machineId);
+
+    await closeElectronApp(ctx.electronApp);
+    const relaunched = await launchTestElectronApp(ctx.userDataDir, ctx.licensePublicKey);
+    ctx.electronApp = relaunched.electronApp;
+    ctx.page = relaunched.page;
+    trackPageErrors(ctx.page, ctx);
+
+    await openSettings(ctx.page);
+    await chooseSettingsCategory(ctx.page, '授权');
+    await expect(row(ctx.page, '机器码').locator('input')).toHaveValue(machineId);
+    const installDataAfterRestart = JSON.parse(await fs.readFile(path.join(ctx.userDataDir, 'data', 'install.json'), 'utf8'));
+    expect(installDataAfterRestart.machineId).toBe(machineId);
+});
+
 test('settings are grouped and persisted through the UI', async ({}, testInfo) => {
-    const { page, userDataDir, electronApp } = testInfo.e2e;
+    const { page, userDataDir, electronApp, licenseKeys } = testInfo.e2e;
 
     expect(await electronApp.evaluate(({ app }) => app.getPath('userData'))).toBe(userDataDir);
 
@@ -326,7 +435,7 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await expect(settingsPanel(page)).toBeVisible();
     await expect(settingsPanel(page).locator('.content__body')).toHaveCSS('user-select', 'text');
 
-    for (const category of ['外观', '终端', '快捷键', '连接', '文件', '脚本', '日志', '更新', '关于']) {
+    for (const category of ['外观', '终端', '快捷键', '连接', '文件', '脚本', '日志', '更新', '授权', '关于']) {
         await expect(settingsCategory(page, category)).toBeVisible();
     }
 
@@ -343,6 +452,12 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await toggleRow(page, '光标闪烁');
     await selectRowValue(page, '光标样式', 'underline');
     await fillRowInput(page, '回滚行数', '1200');
+    await expect(settingsPanel(page).locator('.highlight-rules-head')).toContainText('条规则');
+    await expect(settingsPanel(page).locator('.highlight-rule__name').first()).toHaveValue('错误');
+    await expect
+        .poll(() => settingsPanel(page).locator('.highlight-rule__icon[title="内置规则不可删除"]').count())
+        .toBeGreaterThan(17);
+    await expect(settingsPanel(page).locator('.highlight-rule__icon[title="内置规则不可删除"]').first()).toBeDisabled();
 
     await chooseSettingsCategory(page, '快捷键');
     await expect(settingsHeading(page, '终端')).toBeVisible();
@@ -397,6 +512,26 @@ test('settings are grouped and persisted through the UI', async ({}, testInfo) =
     await expect(settingsHeading(page, '自动更新')).toBeVisible();
     await expect(page.getByText('当前版本')).toBeVisible();
     await toggleRow(page, '自动下载更新');
+
+    await chooseSettingsCategory(page, '授权');
+    await expect(settingsHeading(page, '授权状态')).toBeVisible();
+    await expect(settingsHeading(page, '离线激活')).toBeVisible();
+    await expect(settingsPanel(page).getByText('试用中')).toBeVisible();
+    const machineId = await row(page, '机器码').locator('input').inputValue();
+    expect(machineId).toMatch(/^[a-f0-9]{64}$/);
+    const installData = JSON.parse(await fs.readFile(path.join(userDataDir, 'data', 'install.json'), 'utf8'));
+    expect(installData.machineId).toBe(machineId);
+    const license = signedTestLicense(licenseKeys.privateKey, machineId);
+    await settingsPanel(page).locator('.license-text').fill(JSON.stringify(license, null, 2));
+    await settingsPanel(page).getByRole('button', { name: '导入授权' }).click();
+    await expect(settingsPanel(page).getByText('已激活').first()).toBeVisible();
+    await expect(page.locator('.license-pill')).toContainText('已激活');
+    await settingsPanel(page).getByRole('button', { name: '移除授权' }).click();
+    await expect(settingsPanel(page).getByText('试用中').first()).toBeVisible();
+    await expect(page.locator('.license-pill')).toContainText('试用');
+    await expect(settingsPanel(page).getByRole('button', { name: '移除授权' })).toHaveCount(0);
+    const licenseDataAfterRemove = JSON.parse(await fs.readFile(path.join(userDataDir, 'data', 'license.json'), 'utf8'));
+    expect(licenseDataAfterRemove.license).toBeNull();
 
     await chooseSettingsCategory(page, '关于');
     await expect(
@@ -499,7 +634,7 @@ test('serial session connects and scripts can drive the port from the UI', async
     expect(savedSerialSession.serialStopBits).toBe(2);
     expect(savedSerialSession.serialParity).toBe('even');
     expect(savedSerialSession.serialFlowControl).toBe('software');
-    expect(savedSerialSession.color).toBe('blue');
+    expect(savedSerialSession.color).toBe('violet');
 
     await page.locator('.resource-row', { hasText: 'E2E Serial' }).dblclick();
     await expect(page.locator('.tab', { hasText: 'E2E Serial' })).toBeVisible();
@@ -542,6 +677,7 @@ test('serial session connects and scripts can drive the port from the UI', async
 test('session tree, local shell tab, split pane, and file panel work from the UI', async ({}, testInfo) => {
     const { page, userDataDir, shellCwd } = testInfo.e2e;
     const sessionDataPath = path.join(userDataDir, 'data', 'sessions.json');
+    const commandSetDataPath = path.join(userDataDir, 'data', 'command-sets.json');
 
     await page.getByRole('button', { name: '新建文件夹' }).click();
     const folderDialog = page.locator('.dialog').filter({ hasText: '新建文件夹' });
@@ -563,7 +699,6 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await expect(sessionDialog).toBeVisible();
     await sessionDialog.getByRole('tab', { name: 'Local Shell' }).click();
     await sessionDialog.getByLabel('名称').fill('E2E Local');
-    await sessionDialog.getByRole('button', { name: '绿色' }).click();
     await sessionDialog.getByLabel('文件夹').selectOption({ label: 'E2E Folder / E2E Child' });
     await sessionDialog.getByLabel('Shell').fill(localShellPath());
     await sessionDialog.getByLabel('工作目录').fill(shellCwd);
@@ -579,6 +714,46 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
     await expect(page.locator('.tab', { hasText: 'E2E Local' }).locator('.dot.connected')).toBeVisible({
         timeout: 15_000
     });
+
+    const commandSetCommand =
+        process.platform === 'win32'
+            ? 'echo __NEXTERM_COMMAND_SET__'
+            : 'printf "__NEXTERM_COMMAND_SET__\\n"';
+    await page.locator('.command-add').click();
+    const commandSetDialog = page.locator('.dialog').filter({ hasText: '新建指令集' });
+    await expect(commandSetDialog).toBeVisible();
+    await commandSetDialog.getByLabel('名称').fill('E2E 指令');
+    await commandSetDialog.getByLabel('命令').fill(commandSetCommand);
+    await commandSetDialog.getByTitle('玫红').click();
+    await commandSetDialog.getByRole('button', { name: '保存' }).click();
+    const commandChip = page.locator('.command-chip', { hasText: 'E2E 指令' });
+    await expect(commandChip).toBeVisible();
+    await expect(commandChip).toHaveAttribute('style', /#f43f5e/);
+    await expect.poll(() => pathExists(commandSetDataPath)).toBe(true);
+    const savedCommandSets = JSON.parse(await fs.readFile(commandSetDataPath, 'utf8'));
+    expect(savedCommandSets.commandSets.find(commandSet => commandSet.name === 'E2E 指令').color).toBe('rose');
+    await commandChip.click();
+    await expect(page.locator('.xterm')).toContainText('__NEXTERM_COMMAND_SET__', { timeout: 10_000 });
+    await commandChip.click({ button: 'right' });
+    await expect(page.locator('.context-menu').getByRole('button', { name: '编辑' })).toBeVisible();
+    await page.locator('.context-menu').getByRole('button', { name: '编辑' }).click();
+    const editCommandSetDialog = page.locator('.dialog').filter({ hasText: '编辑指令集' });
+    await expect(editCommandSetDialog).toBeVisible();
+    await editCommandSetDialog.getByLabel('名称').fill('E2E 指令编辑');
+    await editCommandSetDialog.getByLabel('命令').fill(
+        process.platform === 'win32' ? 'echo __NEXTERM_COMMAND_SET_EDIT__' : 'printf "__NEXTERM_COMMAND_SET_EDIT__\\n"'
+    );
+    await editCommandSetDialog.getByTitle('青色').click();
+    await editCommandSetDialog.getByRole('button', { name: '保存' }).click();
+    const editedCommandChip = page.locator('.command-chip', { hasText: 'E2E 指令编辑' });
+    await expect(editedCommandChip).toBeVisible();
+    await expect(editedCommandChip).toHaveAttribute('style', /#06b6d4/);
+    await editedCommandChip.click({ button: 'right' });
+    await expect(page.locator('.context-menu').getByRole('button', { name: '删除' })).toBeVisible();
+    await page.locator('.context-menu').getByRole('button', { name: '删除' }).click();
+    await expect(editedCommandChip).toHaveCount(0);
+    const savedAfterDelete = JSON.parse(await fs.readFile(commandSetDataPath, 'utf8'));
+    expect(savedAfterDelete.commandSets.some(commandSet => commandSet.name === 'E2E 指令编辑')).toBe(false);
 
     await page.locator('.xterm').click();
     await page.keyboard.type('echo __NEXTERM_E2E__');
@@ -685,6 +860,35 @@ test('session tree, local shell tab, split pane, and file panel work from the UI
         .poll(async () => (await fs.readdir(shellCwd)).filter(name => name.startsWith('.nexterm-script-')))
         .toEqual([]);
 
+    await page.getByRole('button', { name: '新建脚本' }).click();
+    const failingScriptDialog = page.locator('.dialog').filter({ hasText: '新建脚本' });
+    await expect(failingScriptDialog).toBeVisible();
+    await failingScriptDialog.getByLabel('名称').fill('E2E Failing Script');
+    await failingScriptDialog.getByLabel('语言').selectOption('javascript');
+    await failingScriptDialog.getByLabel('脚本', { exact: true }).fill("await term.expect('__NEXTERM_NEVER__', 120);");
+    await failingScriptDialog.getByRole('button', { name: '保存' }).click();
+    const failingScriptRow = page.locator('.script-row').filter({ hasText: 'E2E Failing Script' });
+    await expect(failingScriptRow).toBeVisible();
+    await failingScriptRow.click({ button: 'right' });
+    await page.locator('.context-menu').getByRole('button', { name: '执行', exact: true }).click();
+    const failingRunDialog = page.locator('.dialog').filter({ hasText: '执行脚本' });
+    await expect(failingRunDialog).toBeVisible();
+    await failingRunDialog.getByRole('button', { name: '执行' }).click();
+    const failingTask = page.locator('.task-item').filter({ hasText: 'E2E Failing Script' });
+    await expect(failingTask).toContainText('失败', { timeout: 10_000 });
+    await expect(failingTask).toContainText('等待回显超时');
+    await expect(page.locator('.xterm').filter({ hasText: 'NexTerm 脚本错误' })).toHaveCount(0);
+    await expect(page.locator('.xterm').filter({ hasText: '.nexterm-script-' })).toHaveCount(0);
+    await failingTask.getByTitle('错误详情').click();
+    const errorDetailDialog = page.locator('.dialog').filter({ hasText: '错误详情' });
+    await expect(errorDetailDialog).toBeVisible();
+    await expect(errorDetailDialog).toContainText('NexTerm 脚本错误: 等待回显超时: __NEXTERM_NEVER__');
+    await expect(errorDetailDialog).toContainText('Error: 等待回显超时: __NEXTERM_NEVER__');
+    await expect(errorDetailDialog).toContainText('at Interface.');
+    await errorDetailDialog.locator('button.ghost', { hasText: '关闭' }).click();
+    await failingTask.getByTitle('删除任务').click();
+    await expect(failingTask).toHaveCount(0);
+
     const pythonProbeCommand =
         process.platform === 'win32'
             ? 'echo __NEXTERM_PYTHON_EXEC^_TARGET__'
@@ -760,7 +964,7 @@ test('ssh session connects and sftp directory renders from the UI', async ({}, t
     await sessionDialog.getByLabel('端口').fill(String(server.port));
     await sessionDialog.getByLabel('用户名').fill(server.username);
     await sessionDialog.getByLabel('认证').selectOption('password');
-    await sessionDialog.getByLabel('凭据处理').selectOption('session');
+    await sessionDialog.getByLabel('凭据处理').selectOption('persist');
     await sessionDialog.getByRole('button', { name: '保存' }).click();
     await expect(page.locator('.resource-row', { hasText: 'E2E SSH' })).toBeVisible();
 
@@ -771,7 +975,7 @@ test('ssh session connects and sftp directory renders from the UI', async ({}, t
     const savedSshSession = savedSessions.sessions.find(session => session.name === 'E2E SSH');
     expect(savedSshSession.password).toBeUndefined();
     expect(savedSshSession.passphrase).toBeUndefined();
-    expect(savedSshSession.credentialSaveMode).toBe('session');
+    expect(savedSshSession.credentialSaveMode).toBe('persist');
     expect(savedSshSession.credentialId).toBeUndefined();
     expect(savedSshSession.passphraseCredentialId).toBeUndefined();
     expect(await pathExists(credentialDataPath)).toBe(false);
@@ -782,6 +986,20 @@ test('ssh session connects and sftp directory renders from the UI', async ({}, t
     await expect(authDialog).toBeVisible();
     await authDialog.locator('input[type="password"]').fill(server.password);
     await authDialog.getByRole('button', { name: '连接' }).click();
+    await expect(page.locator('.tab', { hasText: 'E2E SSH' }).locator('.dot.connected')).toBeVisible({
+        timeout: 15_000
+    });
+    await expect(page.locator('.xterm')).toContainText('mock ssh ready', { timeout: 10_000 });
+    await expect.poll(() => pathExists(credentialDataPath)).toBe(true);
+    const savedCredentials = await fs.readFile(credentialDataPath, 'utf8');
+    expect(savedCredentials).toContain('safeStorage-base64');
+    expect(savedCredentials).not.toContain(server.password);
+    expect(await fs.readFile(sessionDataPath, 'utf8')).not.toContain(server.password);
+
+    await page.locator('.tab', { hasText: 'E2E SSH' }).getByTitle('关闭标签').click();
+    await expect(page.locator('.tab', { hasText: 'E2E SSH' })).toHaveCount(0);
+    await page.locator('.resource-row', { hasText: 'E2E SSH' }).dblclick();
+    await expect(page.locator('.dialog').filter({ hasText: 'SSH 密码' })).toHaveCount(0);
     await expect(page.locator('.tab', { hasText: 'E2E SSH' }).locator('.dot.connected')).toBeVisible({
         timeout: 15_000
     });

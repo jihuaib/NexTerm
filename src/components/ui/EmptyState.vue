@@ -36,4 +36,7 @@
         border-color: var(--nx-accent);
         color: var(--nx-accent);
     }
+    :deep(svg) {
+        color: var(--nx-icon);
+    }
 </style>

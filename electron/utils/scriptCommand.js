@@ -111,6 +111,38 @@ __nxReader.on('line', line => {
     else pending.reject(new Error(payload || 'term request failed'));
 });
 
+function __nxErrorMessage(error) {
+    if (!error) return '未知错误';
+    if (typeof error === 'string') return error;
+    if (error.message) return error.message;
+    return String(error);
+}
+
+function __nxErrorStack(error, seen = new Set()) {
+    if (!error || typeof error !== 'object') return __nxErrorMessage(error);
+    if (seen.has(error)) return __nxErrorMessage(error);
+    seen.add(error);
+
+    const detail = error.stack
+        ? String(error.stack)
+        : ((error.name ? String(error.name) : 'Error') + ': ' + __nxErrorMessage(error));
+    if (!error.cause) return detail;
+    return detail + '\\nCaused by: ' + __nxErrorStack(error.cause, seen);
+}
+
+function __nxFatal(error) {
+    const message = '\\nNexTerm 脚本错误: ' + __nxErrorMessage(error) + '\\n' + __nxErrorStack(error) + '\\n';
+    try {
+        __nxReader.close();
+    } catch (_err) {
+        /* ignore */
+    }
+    process.stderr.write(message, () => process.exit(1));
+}
+
+process.on('uncaughtException', __nxFatal);
+process.on('unhandledRejection', __nxFatal);
+
 function __nxRequest(action, payload = '', options = {}) {
     const id = String(++__nxReqId);
     const timeout = Number(options.timeout ?? 5000) || 5000;

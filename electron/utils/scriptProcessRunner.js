@@ -139,6 +139,18 @@ function safeExtension(extension) {
         .slice(0, 12);
 }
 
+function summarizeScriptError(text = '') {
+    const lines = String(text || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+    const nextermLine = lines.find(line => line.startsWith('NexTerm 脚本错误:'));
+    if (nextermLine) return nextermLine.replace(/^NexTerm 脚本错误:\s*/, '') || nextermLine;
+    const errorLine = lines.find(line => /^(Error|RuntimeError|Exception|Traceback|SyntaxError|TypeError|ReferenceError):/.test(line));
+    if (errorLine) return errorLine.replace(/^[^:]+:\s*/, '') || errorLine;
+    return lines.find(line => !/^\s*at\s+/.test(line) && !line.startsWith('file://')) || '';
+}
+
 async function createScriptFile(payload, cwd) {
     const language = getScriptLanguage(payload.languageId);
     const content = scriptFileContent(language.id, payload.content || '');
@@ -208,26 +220,31 @@ async function startLocalScriptTask({
     registerTask(task);
 
     let settled = false;
-    const finish = async ({ status, exitCode, msg }) => {
+    let stderrText = '';
+    const finish = async ({ status, exitCode, msg, details }) => {
         if (settled) return;
         settled = true;
         bridge.close();
         await scriptFile.cleanup();
         unregisterTask();
+        const detailText = String(details || stderrText).trim();
         emit(SCRIPT_EVT.TASK, {
             taskId: payload.taskId,
             sessionId,
             status,
             exitCode,
-            msg
+            msg: msg || summarizeScriptError(detailText),
+            details: detailText
         });
     };
 
     child.stdout.on('data', data => bridge.onStdout(data));
-    child.stderr.on('data', data => writeTerminal(data));
+    child.stderr.on('data', data => {
+        const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data || '');
+        stderrText = `${stderrText}${text}`;
+    });
     child.on('error', err => {
-        writeTerminal(`${err.message}\n`);
-        void finish({ status: 'failed', exitCode: 1, msg: err.message });
+        void finish({ status: 'failed', exitCode: 1, msg: err.message, details: err.stack || err.message });
     });
     child.on('close', (exitCode, signal) => {
         const code = Number(exitCode);

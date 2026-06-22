@@ -120,7 +120,7 @@
         place-items: center;
         width: 20px;
         height: 20px;
-        color: inherit;
+        color: var(--nx-icon);
     }
     .content {
         flex: 1;
@@ -152,7 +152,7 @@
     .close {
         border: 1px solid transparent;
         background: transparent;
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
         cursor: pointer;
         font-size: 15px;
         width: 28px;
@@ -163,7 +163,7 @@
     .close:hover {
         border-color: var(--nx-border);
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
     }
     .content__body {
         flex: 1;

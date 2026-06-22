@@ -70,6 +70,20 @@ export const SESSION_COLOR_OPTIONS = [
 export const DEFAULT_SESSION_COLOR = SESSION_COLOR_OPTIONS[0].value;
 const SESSION_COLOR_VALUES = new Set(SESSION_COLOR_OPTIONS.map(color => color.value));
 
+export const PROTOCOL_SESSION_COLORS = {
+    ssh: 'blue',
+    telnet: 'amber',
+    serial: 'violet',
+    local: 'green'
+};
+
+const PROTOCOL_LABELS = {
+    ssh: 'SSH',
+    telnet: 'TELNET',
+    serial: 'SERIAL',
+    local: 'LOCAL'
+};
+
 export function isLocalSessionProtocol(protocol) {
     return protocol === 'local' || protocol === 'shell';
 }
@@ -82,14 +96,37 @@ export function isSerialSessionProtocol(protocol) {
     return protocol === 'serial';
 }
 
-export function normalizeSessionColor(value) {
+export function normalizeSessionColor(value, fallback = DEFAULT_SESSION_COLOR) {
     const next = String(value || '').trim();
-    return SESSION_COLOR_VALUES.has(next) ? next : DEFAULT_SESSION_COLOR;
+    return SESSION_COLOR_VALUES.has(next) ? next : fallback;
 }
 
 export function getSessionColorOption(value) {
     const normalized = normalizeSessionColor(value);
     return SESSION_COLOR_OPTIONS.find(color => color.value === normalized) || SESSION_COLOR_OPTIONS[0];
+}
+
+export function getProtocolSessionColor(protocol) {
+    if (isLocalSessionProtocol(protocol)) return PROTOCOL_SESSION_COLORS.local;
+    if (isSerialSessionProtocol(protocol)) return PROTOCOL_SESSION_COLORS.serial;
+    if (isSshSessionProtocol(protocol)) return PROTOCOL_SESSION_COLORS.ssh;
+    return PROTOCOL_SESSION_COLORS.telnet;
+}
+
+export function getProtocolColorOption(protocol) {
+    const key = isLocalSessionProtocol(protocol)
+        ? 'local'
+        : isSerialSessionProtocol(protocol)
+          ? 'serial'
+          : isSshSessionProtocol(protocol)
+            ? 'ssh'
+            : 'telnet';
+    return {
+        ...getSessionColorOption(getProtocolSessionColor(protocol)),
+        value: key,
+        label: PROTOCOL_LABELS[key],
+        sessionColor: getProtocolSessionColor(protocol)
+    };
 }
 
 export function defaultPortForProtocol(protocol, fallback = 23) {
@@ -134,7 +171,7 @@ export function normalizeSerialBoolean(value, fallback = true) {
 }
 
 export function normalizeCredentialSaveMode(value) {
-    if (value === 'session' || value === 'prompt') return value;
+    if (value === 'persist' || value === 'session' || value === 'prompt') return value;
     return 'prompt';
 }
 
@@ -169,7 +206,7 @@ export function normalizeSessionProfile(session = {}, defaults = {}) {
         type: RESOURCE_NODE_TYPES.SESSION,
         resource: RESOURCE_KINDS.SESSION,
         name: String(session.name || host || serialPath || (isLocal ? 'Local Shell' : '未命名会话')).trim(),
-        color: normalizeSessionColor(session.color),
+        color: getProtocolSessionColor(protocol),
         protocol,
         host: isSerial ? '' : host,
         port: isLocal || isSerial ? null : Number(session.port) || port,
@@ -177,8 +214,10 @@ export function normalizeSessionProfile(session = {}, defaults = {}) {
         authType: session.authType || (session.privateKeyPath ? 'key' : 'password'),
         credentialSaveMode: isLocal || isSerial ? 'prompt' : normalizeCredentialSaveMode(session.credentialSaveMode),
         password: session.password || '',
+        hasSavedPassword: Boolean(session.hasSavedPassword),
         privateKeyPath: session.privateKeyPath || '',
         passphrase: session.passphrase || '',
+        hasSavedPassphrase: Boolean(session.hasSavedPassphrase),
         shell: session.shell || '',
         cwd: session.cwd || '',
         serialPath,

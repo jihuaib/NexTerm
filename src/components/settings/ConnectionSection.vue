@@ -410,6 +410,11 @@
         font-weight: 700;
         font-size: 12px;
     }
+    .forward-flow__title svg,
+    .forward-flow__path svg {
+        flex-shrink: 0;
+        color: var(--nx-icon);
+    }
     .forward-flow__path {
         display: flex;
         align-items: center;

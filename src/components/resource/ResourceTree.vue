@@ -13,7 +13,9 @@
                 :level="0"
                 :selected-id="selectedId"
                 :drop-hover-id="dropHoverId"
+                :collapsed-ids="collapsedIds"
                 @select="$emit('select', $event)"
+                @node-toggle="$emit('node-toggle', $event)"
                 @node-contextmenu="payload => $emit('node-contextmenu', payload)"
                 @node-activate="$emit('node-activate', $event)"
                 @node-drop="payload => $emit('node-drop', payload)"
@@ -31,11 +33,13 @@
     defineProps({
         nodes: { type: Array, default: () => [] },
         selectedId: { type: String, default: '' },
-        dropHoverId: { type: String, default: '' }
+        dropHoverId: { type: String, default: '' },
+        collapsedIds: { type: Array, default: () => [] }
     });
 
     defineEmits([
         'select',
+        'node-toggle',
         'blank-contextmenu',
         'blank-drop',
         'node-contextmenu',

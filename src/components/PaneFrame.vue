@@ -13,12 +13,20 @@
                     v-for="session in sessions"
                     :key="session.sessionId"
                     class="tab"
-                    :class="{ active: session.sessionId === activeSessionId }"
+                    :class="{
+                        active: session.sessionId === activeSessionId,
+                        'drop-before': tabDropTargetId === session.sessionId && tabDropPosition === 'before',
+                        'drop-after': tabDropTargetId === session.sessionId && tabDropPosition === 'after'
+                    }"
                     :style="tabStyle(session)"
                     draggable="true"
                     :title="tabTitle(session)"
                     @click="activateTab(session.sessionId)"
                     @dragstart.stop="startOpenSessionDrag($event, session)"
+                    @dragenter.stop="onTabDragEnter($event, session)"
+                    @dragover.stop="onTabDragOver($event, session)"
+                    @dragleave.stop="onTabDragLeave($event, session)"
+                    @drop.stop="onTabDrop($event, session)"
                     @dragend="onDragEnd"
                 >
                     <span class="dot" :class="session.status" />
@@ -90,16 +98,20 @@
         splitPaneEmpty,
         closePane,
         moveOpenSessionIntoPane,
+        moveOpenSessionToTabPosition,
         activateGroupTab,
         closeGroupTab
     } from '../store';
-    import { getSessionColorOption, isLocalSessionProtocol, isSerialSessionProtocol } from '../models/resources';
+    import { getProtocolColorOption, isLocalSessionProtocol, isSerialSessionProtocol } from '../models/resources';
     import { collectSessions, getLeafSessions } from '../layout';
     import TerminalPane from './TerminalPane.vue';
 
     const props = defineProps({ node: { type: Object, required: true } });
     const edgeDrop = ref('');
     const groupDropActive = ref(false);
+    const tabDropTargetId = ref('');
+    const tabDropPosition = ref('');
+    const draggingOpenTab = ref(null);
 
     const sessions = computed(() => getLeafSessions(props.node));
     const duplicateSessionIndexes = computed(() => {
@@ -113,7 +125,15 @@
         const indexes = new Map();
         groups.forEach(group => {
             if (group.length <= 1) return;
-            group.forEach((session, index) => indexes.set(session.sessionId, index + 1));
+            group
+                .slice()
+                .sort((a, b) => {
+                    const orderA = Number(a.runtimeOrder) || Number.MAX_SAFE_INTEGER;
+                    const orderB = Number(b.runtimeOrder) || Number.MAX_SAFE_INTEGER;
+                    if (orderA !== orderB) return orderA - orderB;
+                    return String(a.sessionId).localeCompare(String(b.sessionId));
+                })
+                .forEach((session, index) => indexes.set(session.sessionId, index + 1));
         });
         return indexes;
     });
@@ -139,10 +159,10 @@
         return duplicateIndex ? `${duplicateIndex}. ${session.name}` : session.name;
     }
     function tabStyle(session) {
-        const color = getSessionColorOption(session.color);
+        const color = getProtocolColorOption(session.protocol);
         return {
+            '--session-tab-color': color.swatch,
             '--session-tab-bg': color.bg,
-            '--session-tab-active-bg': color.activeBg,
             '--session-tab-border': color.border
         };
     }
@@ -165,6 +185,7 @@
             sourcePaneId: props.node.id,
             sessionId: session.sessionId
         };
+        draggingOpenTab.value = payload;
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('application/x-nexterm-open-session', JSON.stringify(payload));
         event.dataTransfer.setData('text/plain', session.name);
@@ -176,6 +197,7 @@
 
     function getOpenTabPayload(event) {
         const raw = event.dataTransfer.getData('application/x-nexterm-open-session');
+        if (!raw && draggingOpenTab.value) return draggingOpenTab.value;
         if (!raw) return null;
         try {
             return JSON.parse(raw);
@@ -186,6 +208,55 @@
 
     function isSelfTabDrag(event) {
         return getOpenTabPayload(event)?.sourcePaneId === props.node.id;
+    }
+
+    function tabPositionFromEvent(event) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        return event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+    }
+
+    function clearTabDrop() {
+        tabDropTargetId.value = '';
+        tabDropPosition.value = '';
+    }
+
+    function updateTabDrop(event, session) {
+        if (!hasOpenTabDrag(event)) return false;
+        const payload = getOpenTabPayload(event);
+        if (!payload || payload.sessionId === session.sessionId) {
+            clearTabDrop();
+            if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+            return false;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        tabDropTargetId.value = session.sessionId;
+        tabDropPosition.value = tabPositionFromEvent(event);
+        groupDropActive.value = false;
+        edgeDrop.value = '';
+        return true;
+    }
+
+    function onTabDragEnter(event, session) {
+        updateTabDrop(event, session);
+    }
+
+    function onTabDragOver(event, session) {
+        updateTabDrop(event, session);
+    }
+
+    function onTabDragLeave(event, session) {
+        if (event.currentTarget.contains(event.relatedTarget)) return;
+        if (tabDropTargetId.value === session.sessionId) clearTabDrop();
+    }
+
+    function onTabDrop(event, targetSession) {
+        const payload = getOpenTabPayload(event);
+        const position = tabPositionFromEvent(event);
+        clearDrop();
+        if (!payload || payload.sessionId === targetSession.sessionId) return;
+        event.preventDefault();
+        moveOpenSessionToTabPosition(props.node.id, payload, targetSession.sessionId, position);
     }
 
     function edgeFromEvent(event) {
@@ -211,6 +282,7 @@
     function clearDrop() {
         edgeDrop.value = '';
         groupDropActive.value = false;
+        clearTabDrop();
     }
 
     function onGroupDragEnter(event) {
@@ -295,6 +367,7 @@
 
     function onDragEnd() {
         clearDrop();
+        draggingOpenTab.value = null;
     }
 </script>
 
@@ -336,6 +409,13 @@
         min-width: 0;
         overflow-x: auto;
         align-self: stretch;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    .tabs::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
     }
     .tabs-empty {
         display: flex;
@@ -348,6 +428,7 @@
         font-size: 12px;
     }
     .tab {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 6px;
@@ -355,20 +436,43 @@
         min-width: 116px;
         height: 32px;
         padding: 0 7px 0 9px;
-        border: 1px solid var(--session-tab-border, transparent);
+        border: 1px solid transparent;
         border-bottom: none;
         border-radius: 7px 7px 0 0;
-        background: var(--session-tab-bg, var(--nx-control-muted));
-        color: var(--nx-text);
+        background: transparent;
+        color: var(--session-tab-color, var(--nx-text-dim));
+        font-weight: 500;
         cursor: grab;
     }
-    .tab.active {
-        background: var(--session-tab-active-bg, var(--nx-bg));
+    .tab:hover {
         border-color: var(--session-tab-border, var(--nx-border));
-        color: var(--nx-text);
+        background: var(--session-tab-bg, var(--nx-control-muted));
+        color: var(--session-tab-color, var(--nx-text));
+    }
+    .tab.active {
+        background: var(--session-tab-bg, var(--nx-bg));
+        border-color: var(--session-tab-border, var(--nx-border));
+        color: var(--session-tab-color, var(--nx-text));
     }
     .tab:active {
         cursor: grabbing;
+    }
+    .tab.drop-before::before,
+    .tab.drop-after::after {
+        content: '';
+        position: absolute;
+        top: 5px;
+        bottom: 5px;
+        width: 2px;
+        border-radius: 999px;
+        background: var(--nx-icon);
+        box-shadow: 0 0 0 1px var(--nx-bg), 0 0 8px var(--nx-icon);
+    }
+    .tab.drop-before::before {
+        left: -2px;
+    }
+    .tab.drop-after::after {
+        right: -2px;
     }
     .tab__title {
         flex: 1;
@@ -377,6 +481,7 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         text-align: left;
+        font-weight: inherit;
     }
     .tab__close {
         display: grid;
@@ -384,13 +489,13 @@
         width: 18px;
         height: 18px;
         border-radius: 5px;
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
         cursor: default;
         flex: 0 0 auto;
     }
     .tab__close:hover {
         background: var(--nx-surface-2);
-        color: var(--nx-danger);
+        color: var(--nx-icon);
     }
     .head-spacer {
         flex: 1;
@@ -399,7 +504,7 @@
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: var(--nx-text-dim);
+        background: var(--session-tab-color, var(--nx-text-dim));
         flex-shrink: 0;
     }
     .dot.connected {
@@ -430,8 +535,11 @@
         background: var(--nx-surface-2);
         color: var(--nx-text);
     }
+    .ph-btn svg {
+        color: var(--nx-icon);
+    }
     .ph-btn.close:hover {
-        color: var(--nx-danger);
+        color: var(--nx-text);
     }
     .pane__body {
         position: relative;

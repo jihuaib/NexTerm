@@ -4,8 +4,8 @@
             <div class="nx-group__head">
                 <h3>运行模型</h3>
                 <p>
-                    脚本由 NexTerm 主进程在本机执行，stdout/stderr 写回目标终端；目标终端只接收 term API
-                    下发的真实输入并返回回显。
+                    脚本由 NexTerm 主进程在本机执行，stdout 写回目标终端，stderr/运行异常显示在任务状态里；目标终端只接收
+                    term API 下发的真实输入并返回回显。
                 </p>
             </div>
 

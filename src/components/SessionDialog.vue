@@ -26,25 +26,6 @@
                     </select>
                 </label>
 
-                <label class="wide session-color-field">
-                    <span>颜色</span>
-                    <div class="session-color-options" role="radiogroup" aria-label="会话颜色">
-                        <button
-                            v-for="color in sessionColors"
-                            :key="color.value"
-                            class="session-color-option"
-                            :class="{ active: form.color === color.value }"
-                            :style="{ '--session-color-swatch': color.swatch }"
-                            type="button"
-                            :title="color.label"
-                            :aria-label="color.label"
-                            :aria-pressed="form.color === color.value ? 'true' : 'false'"
-                            @click="form.color = color.value"
-                        >
-                            <span />
-                        </button>
-                    </div>
-                </label>
             </div>
 
             <div v-if="isNetwork" class="form-grid type-grid">
@@ -87,7 +68,8 @@
                         <span>凭据处理</span>
                         <select v-model="form.credentialSaveMode">
                             <option value="prompt">每次询问</option>
-                            <option value="session">本次会话保留</option>
+                            <option value="session">本次标签保留</option>
+                            <option value="persist">永久保存</option>
                         </select>
                     </label>
 
@@ -237,9 +219,9 @@
         isLocalSessionProtocol,
         isSerialSessionProtocol,
         isSshSessionProtocol,
+        getProtocolColorOption,
+        getProtocolSessionColor,
         normalizeCredentialSaveMode,
-        normalizeSessionColor,
-        SESSION_COLOR_OPTIONS,
         normalizeSerialBoolean,
         normalizeSerialFlowControl,
         normalizeSerialNumber,
@@ -256,13 +238,24 @@
     });
     const emit = defineEmits(['close']);
 
+    function protocolStyle(protocol) {
+        const color = getProtocolColorOption(protocol);
+        return {
+            '--segmented-tab-color': color.swatch,
+            '--segmented-tab-bg': color.bg,
+            '--segmented-tab-border': color.border,
+            '--protocol-color': color.swatch,
+            '--protocol-color-bg': color.bg,
+            '--protocol-color-border': color.border
+        };
+    }
+
     const sessionTypes = [
-        { value: 'telnet', label: 'Telnet', icon: Server },
-        { value: 'ssh', label: 'SSH / SFTP', icon: Server },
-        { value: 'serial', label: 'Serial', icon: Cable },
-        { value: 'local', label: 'Local Shell', icon: SquareTerminal }
+        { value: 'telnet', label: 'Telnet', icon: Server, style: protocolStyle('telnet') },
+        { value: 'ssh', label: 'SSH / SFTP', icon: Server, style: protocolStyle('ssh') },
+        { value: 'serial', label: 'Serial', icon: Cable, style: protocolStyle('serial') },
+        { value: 'local', label: 'Local Shell', icon: SquareTerminal, style: protocolStyle('local') }
     ];
-    const sessionColors = SESSION_COLOR_OPTIONS;
 
     const folderOptions = computed(() => {
         const byId = new Map(store.sessionFolders.map(folder => [folder.id, folder]));
@@ -286,9 +279,8 @@
         return props.folderId || getCreateFolderId();
     }
 
-    function initialSessionColor() {
-        if (props.session) return normalizeSessionColor(props.session.color);
-        return sessionColors[store.sessions.length % sessionColors.length]?.value || normalizeSessionColor('');
+    function initialProtocol() {
+        return props.session?.protocol || store.settings.defaultProtocol;
     }
 
     const submitting = ref(false);
@@ -298,9 +290,8 @@
     const form = reactive({
         id: props.session?.id,
         name: props.session?.name || '',
-        color: initialSessionColor(),
         folderId: initialFolderId(),
-        protocol: props.session?.protocol || store.settings.defaultProtocol,
+        protocol: initialProtocol(),
         host: props.session?.host || '',
         port:
             props.session?.port ||
@@ -355,6 +346,13 @@
         return 'Telnet 会话配置';
     });
     const credentialModeDescription = computed(() => {
+        const saved =
+            form.authType === 'key' ? props.session?.hasSavedPassphrase : props.session?.hasSavedPassword;
+        if (form.credentialSaveMode === 'persist') {
+            return saved
+                ? '已加密保存到本机，之后打开该会话会自动使用；会话文件不保存明文。'
+                : '首次连接成功后加密保存到本机，之后打开该会话会自动使用；会话文件不保存明文。';
+        }
         if (form.credentialSaveMode === 'session') {
             return '连接时输入的凭据只保留在当前终端标签内，关闭标签或重启应用后会重新询问。';
         }
@@ -436,7 +434,7 @@
         const base = {
             id: form.id,
             name: String(form.name || '').trim(),
-            color: normalizeSessionColor(form.color),
+            color: getProtocolSessionColor(form.protocol),
             folderId: form.folderId || null,
             protocol: form.protocol,
             username: String(form.username || '').trim(),
@@ -596,12 +594,12 @@
         border: 1px solid var(--nx-border);
         border-radius: 5px;
         background: var(--nx-control-muted);
-        color: var(--nx-text-dim);
+        color: var(--nx-icon);
         cursor: pointer;
     }
     .serial-refresh:hover:not(:disabled) {
         background: var(--nx-surface-2);
-        color: var(--nx-text);
+        color: var(--nx-icon);
     }
     .serial-check {
         display: flex;
@@ -613,44 +611,6 @@
     .serial-check input {
         width: 16px;
         height: 16px;
-    }
-    .session-color-field {
-        gap: 8px;
-    }
-    .session-color-options {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 8px;
-        min-height: 34px;
-    }
-    .session-color-option {
-        position: relative;
-        display: grid;
-        place-items: center;
-        width: 34px;
-        min-width: 34px;
-        height: 34px;
-        padding: 0;
-        border: 1px solid var(--nx-border);
-        border-radius: 7px;
-        background: var(--nx-bg);
-        cursor: pointer;
-    }
-    .session-color-option span {
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: var(--session-color-swatch);
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
-    }
-    .session-color-option:hover {
-        border-color: var(--nx-text-dim);
-        background: var(--nx-surface-2);
-    }
-    .session-color-option.active {
-        border-color: var(--nx-accent);
-        box-shadow: 0 0 0 2px var(--nx-accent-border-soft);
     }
     input,
     select {
